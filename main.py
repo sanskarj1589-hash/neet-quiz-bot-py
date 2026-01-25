@@ -22,7 +22,7 @@ from telegram.ext import (
 import database as db
 
 # ---------------- CONFIG ----------------
-BOT_TOKEN = "MY_BOT_TOKEN"
+BOT_TOKEN = os.getenv("MY_BOT_TOKEN")
 OWNER_ID = 6435499094
 
 logging.basicConfig(
