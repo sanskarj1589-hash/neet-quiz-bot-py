@@ -27,6 +27,13 @@ BOT_TOKEN = os.getenv("MY_BOT_TOKEN")
 OWNER_ID = 6435499094   # your Telegram user ID
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set.")
+
+# ---------------- AUTO QUIZ SETTINGS ----------------
+
+settings = {
+    "interval": 60  # auto quiz interval in minutes
+}
+
 # ================= LOGGING =================
 
 logging.basicConfig(
@@ -369,6 +376,110 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text = compliment.replace("{user}", user.first_name)
             await context.bot.send_message(chat_id, text)
 
+# ---------------- COMPLIMENTS ----------------
+
+@admin_only
+async def addcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage:\n/addcompliment correct Your text {user}\n"
+            "/addcompliment wrong Your text {user}"
+        )
+        return
+
+    ctype = context.args[0].lower()
+    text = " ".join(context.args[1:])
+
+    if ctype not in ("correct", "wrong"):
+        await update.message.reply_text("❌ Type must be `correct` or `wrong`.")
+        return
+
+    db.add_compliment(ctype, text)
+    await update.message.reply_text("✅ Compliment added successfully.")
+
+
+@admin_only
+async def delcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /delcompliment compliment_id")
+        return
+
+    try:
+        cid = int(context.args[0])
+        db.delete_compliment(cid)
+        await update.message.reply_text("🗑️ Compliment deleted.")
+    except:
+        await update.message.reply_text("❌ Invalid compliment ID.")
+
+
+@admin_only
+async def listcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = db.list_compliments()
+
+    if not rows:
+        await update.message.reply_text("⚠️ No compliments found.")
+        return
+
+    text = "💬 *Compliments List*\n\n"
+    for r in rows:
+        text += f"ID `{r['id']}` | {r['type']} → {r['text']}\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+@group_admin_only
+async def offcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    db.set_compliments_off(chat_id)
+    await update.message.reply_text("🔕 Compliments turned OFF in this group.")
+
+# ---------------- AUTO QUIZ ----------------
+
+@group_admin_only
+async def autoquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db.enable_autoquiz(update.effective_chat.id)
+    await update.message.reply_text("⏱️ Auto quiz enabled for this group.")
+
+
+async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
+    groups = db.get_autoquiz_groups()
+    for gid in groups:
+        try:
+            question = db.get_random_question(gid)
+            if not question:
+                continue
+
+            q_id, q_text, options, correct = question
+            poll = await context.bot.send_poll(
+                chat_id=gid,
+                question=q_text,
+                options=options,
+                is_anonymous=False,
+                type=Poll.QUIZ,
+                correct_option_id=correct - 1
+            )
+
+            db.register_poll(poll.poll.id, q_id, gid)
+        except Exception as e:
+            logger.warning(f"Autoquiz failed in {gid}: {e}")
+
+
+async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
+    groups = db.get_all_groups()
+    for gid in groups:
+        try:
+            rows = db.get_group_leaderboard(gid, limit=10)
+            if not rows:
+                continue
+
+            text = "🌙 *Nightly Group Leaderboard*\n\n"
+            for i, r in enumerate(rows, 1):
+                text += f"{i}. {r['name']} — {r['score']}\n"
+
+            await context.bot.send_message(gid, text, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Nightly leaderboard failed in {gid}: {e}")
+
 # ---------------- LEADERBOARDS ----------------
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -458,56 +569,57 @@ async def botstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(text)
+    def main():
+    db.init_db()
 
-db.init_db()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# ================= BASIC =================
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("help", help_cmd))
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # BASIC
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
 
-# ================= ADMIN =================
-app.add_handler(CommandHandler("addadmin", addadmin))
-app.add_handler(CommandHandler("removeadmin", removeadmin))
-app.add_handler(CommandHandler("adminlist", adminlist))
-app.add_handler(CommandHandler("broadcast", broadcast))
-app.add_handler(CommandHandler("botstats", botstats))
+    # ADMIN
+    app.add_handler(CommandHandler("addadmin", addadmin))
+    app.add_handler(CommandHandler("removeadmin", removeadmin))
+    app.add_handler(CommandHandler("adminlist", adminlist))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("botstats", botstats))
 
-# ================= QUESTIONS =================
-app.add_handler(CommandHandler("addquestion", addquestion))
-app.add_handler(CommandHandler("delallquestions", delallquestions))
-app.add_handler(CommandHandler("questions", questions))
-app.add_handler(CommandHandler("randomquiz", randomquiz))
-app.add_handler(PollAnswerHandler(handle_poll_answer))
+    # QUESTIONS & QUIZ
+    app.add_handler(CommandHandler("addquestion", addquestion))
+    app.add_handler(CommandHandler("delallquestions", delallquestions))
+    app.add_handler(CommandHandler("questions", questions))
+    app.add_handler(CommandHandler("randomquiz", randomquiz))
+    app.add_handler(PollAnswerHandler(handle_poll_answer))
 
-# ================= LEADERBOARDS & STATS =================
-app.add_handler(CommandHandler("leaderboard", leaderboard))
-app.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
-app.add_handler(CommandHandler("mystats", mystats))
+    # LEADERBOARDS & STATS
+    app.add_handler(CommandHandler("leaderboard", leaderboard))
+    app.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
+    app.add_handler(CommandHandler("mystats", mystats))
 
-# ================= COMPLIMENTS =================
-app.add_handler(CommandHandler("addcompliment", addcompliment))
-app.add_handler(CommandHandler("delcompliment", delcompliment))
-app.add_handler(CommandHandler("listcompliments", listcompliments))
-app.add_handler(CommandHandler("offcompliments", offcompliments))
-# (oncompliments will be added later with DB)
+    # COMPLIMENTS
+    app.add_handler(CommandHandler("addcompliment", addcompliment))
+    app.add_handler(CommandHandler("delcompliment", delcompliment))
+    app.add_handler(CommandHandler("listcompliments", listcompliments))
+    app.add_handler(CommandHandler("offcompliments", offcompliments))
 
-# ================= AUTO QUIZ =================
-app.add_handler(CommandHandler("autoquiz", autoquiz))
+    # AUTO QUIZ
+    app.add_handler(CommandHandler("autoquiz", autoquiz))
 
+    app.job_queue.run_repeating(
+        auto_quiz_job,
+        interval=settings["interval"] * 60,
+        first=20
+    )
 
-app.job_queue.run_repeating(
-    auto_quiz_job,
-    interval=settings["interval"] * 60,
-    first=20
-)
+    app.job_queue.run_daily(
+        nightly_leaderboard_job,
+        time=time(hour=21, minute=0)
+    )
 
-app.job_queue.run_daily(
-    nightly_leaderboard_job,
-    time=time(hour=21, minute=0)
-)
+    logger.info("🤖 NEETIQBot is running...")
+    app.run_polling()
 
-app.run_polling()
 
 if __name__ == "__main__":
     main()
