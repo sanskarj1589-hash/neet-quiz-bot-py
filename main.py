@@ -255,23 +255,6 @@ async def listcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # GROUP COMPLIMENT TOGGLE
 # =========================
-async def offcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
-
-    if chat.type == Chat.PRIVATE:
-        await update.message.reply_text("❌ Group-only command.")
-        return
-
-    admins = await context.bot.get_chat_administrators(chat.id)
-    admin_ids = [a.user.id for a in admins]
-
-    if user.id not in admin_ids:
-        await update.message.reply_text("❌ Only group admins can do this.")
-        return
-
-    db.set_compliments_enabled(chat.id, False)
-    await update.message.reply_text("🔕 Compliments turned OFF for this group.")
 
 
 async def oncompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -423,28 +406,6 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# GROUP LEADERBOARD
-# =========================
-async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == Chat.PRIVATE:
-        await update.message.reply_text("❌ Group only.")
-        return
-
-    rows = db.get_group_leaderboard(chat.id, limit=10)
-    if not rows:
-        await update.message.reply_text("No data.")
-        return
-
-    text = f"👥 *{chat.title} Leaderboard*\n\n"
-    for i, r in enumerate(rows, 1):
-        text += f"{i}. {r['name']} — {r['score']}\n"
-
-    await update.message.reply_text(
-        apply_footer(text),
-        parse_mode="Markdown"
-    )
 
 
 # =========================
