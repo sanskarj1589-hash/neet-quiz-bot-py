@@ -65,6 +65,14 @@ def chunk_text(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT):
     chunks.append(text)
     return chunks
 
+async def is_group_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if update.effective_chat.type not in ("group", "supergroup"):
+        return False
+    member = await context.bot.get_chat_member(
+        update.effective_chat.id,
+        update.effective_user.id
+    )
+    return member.status in ("administrator", "creator")
 
 def apply_footer(text: str) -> str:
     return f"{text}\n\n━━━━━━━━━━━━━━━\nNEETIQBot"
@@ -203,53 +211,86 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+# ================= COMPLIMENT SYSTEM =================
 
-# =========================
-# COMPLIMENTS SYSTEM
-# =========================
-@require_admin
 async def addcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not db.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Admin only command.")
+        return
+
     if len(context.args) < 2:
-        await update.message.reply_text("Usage: /addcompliment <correct|wrong> <text>")
+        await update.message.reply_text(
+            "Usage:\n"
+            "/addcompliment correct Your text {user}\n"
+            "/addcompliment wrong Your text {user}"
+        )
         return
 
     ctype = context.args[0].lower()
     text = " ".join(context.args[1:])
 
     if ctype not in ("correct", "wrong"):
-        await update.message.reply_text("Type must be `correct` or `wrong`.")
+        await update.message.reply_text("❌ Type must be `correct` or `wrong`.")
         return
 
     db.add_compliment(ctype, text)
-    await update.message.reply_text("✅ Compliment added.")
-
-
-@require_admin
-async def delcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: /delcompliment <id>")
-        return
-
-    cid = int(context.args[0])
-    db.delete_compliment(cid)
-    await update.message.reply_text("🗑 Compliment deleted.")
+    await update.message.reply_text(f"✅ {ctype.capitalize()} compliment added.")
 
 
 async def listcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = db.get_all_compliments()
-    if not rows:
-        await update.message.reply_text("No compliments found.")
+    if not db.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Admin only command.")
         return
 
-    text = "💬 *Compliments List*\n\n"
-    for r in rows:
-        text += f"#{r['id']} [{r['type']}]\n{r['text']}\n\n"
+    compliments = db.get_all_compliments()
+    if not compliments:
+        await update.message.reply_text("⚠️ No compliments found.")
+        return
 
-    for chunk in chunk_text(text):
-        await update.message.reply_text(
-            apply_footer(chunk),
-            parse_mode="Markdown"
-        )
+    msg = "💬 Compliments List\n\n"
+    for cid, ctype, text in compliments:
+        msg += f"[{cid}] ({ctype}) {text}\n"
+
+    for part in split_message(msg):
+        await update.message.reply_text(part)
+
+
+async def offcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("❌ This command works only in groups.")
+        return
+
+    if not await is_group_admin(update, context):
+        await update.message.reply_text("❌ Group admin only command.")
+        return
+
+    db.set_group_compliments(update.effective_chat.id, False)
+    await update.message.reply_text("🔕 Compliments disabled in this group.")
+
+
+async def oncompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("❌ This command works only in groups.")
+        return
+
+    if not await is_group_admin(update, context):
+        await update.message.reply_text("❌ Group admin only command.")
+        return
+
+    db.set_group_compliments(update.effective_chat.id, True)
+    await update.message.reply_text("🔔 Compliments enabled in this group.")
+
+
+def get_random_compliment(chat_id: int, ctype: str) -> str | None:
+    if not db.are_compliments_enabled(chat_id):
+        return None
+
+    compliments = db.get_compliments_by_type(ctype)
+    if not compliments:
+        return None
+
+    import random
+    return random.choice(compliments)
 
 
 # =========================
@@ -386,27 +427,106 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# GLOBAL LEADERBOARD
-# =========================
+
+# ================= LEADERBOARDS =================
+
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = db.get_global_leaderboard(limit=10)
-    if not rows:
-        await update.message.reply_text("No data.")
+    data = db.get_global_leaderboard(limit=25)
+
+    if not data:
+        await update.message.reply_text("📭 No leaderboard data yet.")
         return
 
-    text = "🌍 *Global Leaderboard*\n\n"
-    for i, r in enumerate(rows, 1):
-        name = r["first_name"] or r["username"] or r["user_id"]
-        text += f"{i}. {name} — {r['score']}\n"
+    msg = "🌍 Global Leaderboard (Top 25)\n\n"
+    rank = 1
 
-    await update.message.reply_text(
-        apply_footer(text),
-        parse_mode="Markdown"
+    for user_id, name, attempted, correct, score in data:
+        msg += (
+            f"{rank}. {name}\n"
+            f"📘 Attempted: {attempted} | ✅ Correct: {correct} | 🏆 Score: {score}\n\n"
+        )
+        rank += 1
+
+    for part in split_message(msg):
+        await update.message.reply_text(part)
+
+async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("❌ This command works only in groups.")
+        return
+
+    data = db.get_group_leaderboard(chat.id, limit=25)
+
+    if not data:
+        await update.message.reply_text("📭 No group leaderboard data yet.")
+        return
+
+    text = "👥 Group Leaderboard (Top 25)\n\n"
+    for i, row in enumerate(data, 1):
+        text += (
+            f"{i}. {row['first_name']}\n"
+            f"📘 Attempted: {row['attempted']} | "
+            f"✅ Correct: {row['correct']} | "
+            f"🏆 Score: {row['score']}\n\n"
+        )
+
+    await update.message.reply_text(text)
+
+# ================= QUIZ ANSWER HANDLER =================
+
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = update.poll_answer
+    user = answer.user
+    poll_id = answer.poll_id
+    selected = answer.option_ids[0]
+
+    poll_data = context.bot_data.get(poll_id)
+    if not poll_data:
+        return
+
+    chat_id = poll_data["chat_id"]
+    question_id = poll_data["question_id"]
+    correct_index = poll_data["correct_index"]
+
+    is_correct = selected == correct_index
+
+    # Update stats
+    db.update_user_stats(
+        user_id=user.id,
+        username=user.username or user.first_name,
+        correct=is_correct
     )
 
+    # Update group stats
+    if chat_id:
+        db.update_group_stats(
+            chat_id=chat_id,
+            user_id=user.id,
+            username=user.username or user.first_name,
+            correct=is_correct
+        )
 
+    # ================= COMPLIMENT CONTROL =================
 
+    # Check if compliments are OFF in this group
+    if chat_id and db.is_compliments_off(chat_id):
+        return
+
+    compliment = db.get_random_compliment(
+        "correct" if is_correct else "wrong"
+    )
+
+    if not compliment:
+        return
+
+    text = compliment.replace("{user}", user.first_name)
+
+    try:
+        await context.bot.send_message(chat_id, text)
+    except:
+        pass
 
 # =========================
 # QUESTIONS LIST (PAGINATED)
@@ -472,7 +592,62 @@ async def delallquestions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🗑 All questions deleted")
 
 
+# ================= OFF COMPLIMENTS =================
 
+async def offcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("❌ This command works only in groups.")
+        return
+
+    member = await context.bot.get_chat_member(chat.id, user.id)
+    if member.status not in ("administrator", "creator"):
+        await update.message.reply_text("❌ Only group admins can use this command.")
+        return
+
+    db.set_compliments_off(chat.id)
+    await update.message.reply_text("🔕 Compliments turned OFF for this group.")
+
+# ================= ON COMPLIMENTS =================
+
+async def oncompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("❌ This command works only in groups.")
+        return
+
+    member = await context.bot.get_chat_member(chat.id, user.id)
+    if member.status not in ("administrator", "creator"):
+        await update.message.reply_text("❌ Only group admins can use this command.")
+        return
+
+    db.set_compliments_on(chat.id)
+    await update.message.reply_text("🔔 Compliments turned ON for this group.")
+
+# ================= LIST COMPLIMENTS =================
+
+async def listcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    if not db.is_admin(user.id):
+        await update.message.reply_text("❌ Admin only command.")
+        return
+
+    compliments = db.get_all_compliments()
+
+    if not compliments:
+        await update.message.reply_text("📭 No compliments added yet.")
+        return
+
+    text = "💬 Compliments List\n\n"
+    for c in compliments:
+        text += f"• [{c['type'].upper()}] {c['text']}\n"
+
+    await update.message.reply_text(text[:4000])  # Telegram limit safe
 
 # =========================
 # AUTO QUIZ
@@ -556,7 +731,8 @@ def main():
     app.add_handler(CommandHandler("delcompliment", delcompliment))
     app.add_handler(CommandHandler("listcompliments", listcompliments))
     app.add_handler(CommandHandler("offcompliments", offcompliments))
-
+    app.add_handler(CommandHandler("oncompliments", oncompliments))
+    
     # AUTO QUIZ
     app.add_handler(CommandHandler("autoquiz", autoquiz))
 
