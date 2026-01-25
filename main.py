@@ -511,46 +511,6 @@ async def delallquestions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🗑 All questions deleted")
 
 
-# =========================
-# COMPLIMENT SYSTEM
-# =========================
-@require_admin
-async def addcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    parts = update.message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await update.message.reply_text("Usage: /addcompliment correct|wrong text")
-        return
-
-    db.add_compliment(parts[1], parts[2])
-    await update.message.reply_text("✅ Compliment added")
-
-
-@require_admin
-async def delcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cid = context.args[0]
-    db.delete_compliment(cid)
-    await update.message.reply_text("🗑 Compliment deleted")
-
-
-async def listcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = db.list_compliments()
-    if not rows:
-        await update.message.reply_text("No compliments found")
-        return
-
-    text = "💬 Compliments\n\n"
-    for r in rows:
-        text += f"{r['id']} ({r['type']}): {r['text']}\n\n"
-
-    for chunk in chunk_text(text):
-        await update.message.reply_text(chunk)
-
-
-@require_admin
-async def offcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    db.set_compliments(chat.id, False)
-    await update.message.reply_text("🔕 Compliments disabled in this group")
 
 
 # =========================
