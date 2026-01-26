@@ -19,7 +19,7 @@ from telegram.ext import (
 import database as db
 
 # ---------------- CONFIG ----------------
-BOT_TOKEN = "8203396114:AAFIDeobXBWQ0ax3-vf2H6UPKpWp0gdGzrI"
+BOT_TOKEN = "MY_BOT_TOKEN"
 OWNER_ID = 6435499094
 
 # ---------------- RENDER KEEP-ALIVE ----------------
