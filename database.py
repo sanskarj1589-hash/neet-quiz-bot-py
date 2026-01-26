@@ -359,10 +359,10 @@ def set_compliments_off(chat_id):
 def is_compliments_off(chat_id):
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT compliments_off FROM groups WHERE chat_id=?",
+            "SELECT compliments_off FROM groups WHERE chat_id = ?",
             (chat_id,)
         ).fetchone()
-        return row and row["compliments_off"] == 1
+        return row["compliments_off"] == 1 if row else False
 
 
 # ---------- AUTO QUIZ ----------
