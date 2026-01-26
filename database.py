@@ -11,21 +11,6 @@ import random
 
 DB_NAME = "neetquiz.db"
 
-
-# -------------------------
-# DB context manager
-# -------------------------
-@contextmanager
-def get_db():
-    conn = sqlite3.connect(DB_NAME, timeout=30)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
 # -------------------------
 # INIT DB
 # -------------------------
@@ -76,6 +61,50 @@ def init_db():
         )
         """)
 
+        # SENT QUESTIONS (PER GROUP)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS sent_questions (
+            chat_id INTEGER,
+            question_id INTEGER,
+            sent_at TEXT,
+            PRIMARY KEY (chat_id, question_id)
+        )
+        """)
+
+        # COMPLIMENTS
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS compliments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT CHECK(type IN ('correct','wrong')),
+            text TEXT NOT NULL
+        )
+        """)
+
+        # GLOBAL SCORES
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS scores_global (
+            user_id INTEGER PRIMARY KEY,
+            attempted INTEGER DEFAULT 0,
+            correct INTEGER DEFAULT 0,
+            incorrect INTEGER DEFAULT 0,
+            score INTEGER DEFAULT 0
+        )
+        """)
+
+        # GROUP SCORES
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS group_stats (
+            chat_id INTEGER,
+            user_id INTEGER,
+            username TEXT,
+            attempted INTEGER DEFAULT 0,
+            correct INTEGER DEFAULT 0,
+            incorrect INTEGER DEFAULT 0,
+            score INTEGER DEFAULT 0,
+            PRIMARY KEY (chat_id, user_id)
+        )
+        """)
+
         # SETTINGS
         conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -86,7 +115,18 @@ def init_db():
 
     init_footer()
     print("✅ Database initialized successfully")
-
+# -------------------------
+# DB context manager
+# -------------------------
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 # -------------------------
 # USERS / CHATS
