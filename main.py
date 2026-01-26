@@ -192,18 +192,13 @@ async def adminlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    print("🔥 BROADCAST HANDLER STARTED")
 
-    # ADMIN CHECK
     if not db.is_admin(user.id):
         await update.message.reply_text("❌ Admin only command.")
         return
 
-    # MESSAGE CHECK
     if not context.args:
-        await update.message.reply_text(
-            "Usage:\n/broadcast Your message here"
-        )
+        await update.message.reply_text("Usage:\n/broadcast Your message here")
         return
 
     message = " ".join(context.args)
@@ -211,6 +206,31 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent_users = failed_users = 0
     sent_groups = failed_groups = 0
 
+    # USERS
+    users = db.get_all_users()
+    for u in users:
+        try:
+            await context.bot.send_message(chat_id=int(u["user_id"]), text=message)
+            sent_users += 1
+        except:
+            failed_users += 1
+
+    # GROUPS
+    groups = db.get_all_groups()
+    for gid in groups:
+        try:
+            await context.bot.send_message(chat_id=int(gid), text=message)
+            sent_groups += 1
+        except:
+            failed_groups += 1
+
+    await update.message.reply_text(
+        f"📢 Broadcast Report\n\n"
+        f"👤 Users: {sent_users} sent, {failed_users} failed\n"
+        f"👥 Groups: {sent_groups} sent, {failed_groups} failed"
+    )
+
+    
 async def footer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
