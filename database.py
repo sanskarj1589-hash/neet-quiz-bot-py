@@ -11,7 +11,7 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 def get_db():
     # Use sslmode='require' for secure cloud connections
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-    # cursor_factory=RealDictCursor makes results behave like dictionaries (like sqlite.Row)
+    # cursor_factory=RealDictCursor makes results behave like dictionaries
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         yield cur
@@ -35,11 +35,6 @@ def init_db():
             poll_id TEXT PRIMARY KEY,
             chat_id BIGINT,
             correct_option_id INTEGER)""")
-
-        cur.execute("""CREATE TABLE IF NOT EXISTS sent_questions (
-            chat_id BIGINT,
-            q_id INTEGER,
-            PRIMARY KEY(chat_id, q_id))""")
 
         # --- 2. USER & GROUP REGISTRATION ---
         cur.execute("""CREATE TABLE IF NOT EXISTS users (
@@ -96,8 +91,7 @@ def init_db():
             ('footer_text', 'NEETIQBot'),
             ('footer_enabled', '1'),
             ('autoquiz_enabled', '0'),
-            ('autoquiz_interval', '30'),
-            ('compliments_enabled', '1')
+            ('autoquiz_interval', '30')
         ]
         for key, val in defaults:
             cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", (key, val))
@@ -107,7 +101,6 @@ def update_user_stats(user_id, chat_id, is_correct):
     points = 4 if is_correct else -1
     
     with get_db() as cur:
-        # PostgreSQL uses ON CONFLICT instead of INSERT OR IGNORE
         cur.execute("INSERT INTO stats (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
         
         cur.execute("SELECT * FROM stats WHERE user_id=%s", (user_id,))
@@ -126,20 +119,10 @@ def update_user_stats(user_id, chat_id, is_correct):
                          correct=correct+%s WHERE chat_id=%s AND user_id=%s""",
                         (points, 1 if is_correct else 0, chat_id, user_id))
 
-def get_compliment(c_type):
-    with get_db() as cur:
-        cur.execute("SELECT value FROM settings WHERE key='compliments_enabled'")
-        status = cur.fetchone()['value']
-        if status == '0': return None
-        
-        # Postgres uses RANDOM() instead of ORDER BY RANDOM() for better efficiency here
-        cur.execute("SELECT text FROM compliments WHERE type=%s ORDER BY RANDOM() LIMIT 1", (c_type,))
-        res = cur.fetchone()
-        return res['text'] if res else None
-
 def get_leaderboard_data(chat_id=None, limit=25):
     with get_db() as cur:
         if chat_id:
+            # Join with users table to get the first_name for the leaderboard
             cur.execute("""SELECT u.first_name, gs.attempted, gs.correct, gs.score
                         FROM group_stats gs JOIN users u ON gs.user_id = u.user_id
                         WHERE gs.chat_id = %s ORDER BY gs.score DESC LIMIT %s""", (chat_id, limit))
@@ -152,3 +135,4 @@ def get_leaderboard_data(chat_id=None, limit=25):
 if __name__ == "__main__":
     init_db()
     print("✅ PostgreSQL Database Layer Ready.")
+                                                                                                           
