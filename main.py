@@ -73,7 +73,22 @@ def get_add_to_group_keyboard():
         ]]
     )
 
+def build_global_leaderboard_text(limit=10) -> str:
+    board = db.get_global_leaderboard(limit)
 
+    if not board:
+        return None
+
+    text = "🌍 *Global Leaderboard*\n\n"
+    rank = 1
+
+    for u in board:
+        name = u["first_name"] or f"User {u['user_id']}"
+        text += f"{rank}. {name} — 🏆 {u['score']}\n"
+        rank += 1
+
+    return apply_footer(text)
+    
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -553,11 +568,12 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         name = f"@{user.username}" if user.username else user.first_name
         text = compliment.replace("{user}", name)
 
+
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=text
-            )
+    await context.bot.send_message(chat_id=chat_id, text=text)
+except Exception as e:
+    logger.warning(f"Compliment send failed: {e}")
+
         except Exception as e:
             logger.warning(f"Compliment not sent to group {chat_id}: {e}")
 
@@ -842,7 +858,7 @@ def main():
     # ---- NIGHTLY LEADERBOARD JOB ----
     app.job_queue.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=13, minute=29),
+        time=time(hour=22, minute=0),
     )
 
     print("✅ Nightly leaderboard job registered (10 PM)")
