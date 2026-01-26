@@ -25,7 +25,7 @@ def get_db():
     finally:
         conn.close()
 
-
+        
 # -------------------------
 # INIT DB
 # -------------------------
@@ -93,7 +93,7 @@ def init_db():
         )
         """)
 
-        # ✅ GLOBAL SCORES + STREAKS
+        # GLOBAL SCORES + STREAKS
         conn.execute("""
         CREATE TABLE IF NOT EXISTS scores_global (
             user_id INTEGER PRIMARY KEY,
@@ -112,10 +112,34 @@ def init_db():
         )
         """)
 
+        # COMPLIMENTS
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS compliments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT CHECK (type IN ('correct', 'wrong')) NOT NULL,
+            text TEXT NOT NULL
+        )
+        """)
+
+        # GROUP STATS
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS group_stats (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            username TEXT,
+            attempted INTEGER DEFAULT 0,
+            correct INTEGER DEFAULT 0,
+            incorrect INTEGER DEFAULT 0,
+            score INTEGER DEFAULT 0,
+            PRIMARY KEY (chat_id, user_id)
+        )
+        """)
+
         conn.commit()
 
     init_footer()
     print("✅ Database initialized successfully")
+
 
 
 # -------------------------
@@ -407,7 +431,8 @@ def get_global_user_stats(user_id):
             current_streak,
             best_streak,
             max_streak,
-            daily_streak
+            daily_streak,
+            last_attempt_date
         FROM scores_global
         WHERE user_id = ?
         """, (user_id,)).fetchone()
@@ -421,11 +446,12 @@ def get_global_user_stats(user_id):
                 "current_streak": 0,
                 "best_streak": 0,
                 "max_streak": 0,
-                "daily_streak": 0
+                "daily_streak": 0,
+                "last_attempt_date": None
             }
 
         return dict(row)
-
+        
 def get_global_leaderboard(limit=25):
     with get_db() as conn:
         rows = conn.execute("""
@@ -549,6 +575,33 @@ def get_all_groups():
             "SELECT chat_id FROM chats WHERE type IN ('group', 'supergroup')"
         ).fetchall()
         return [r["chat_id"] for r in rows]
+
+def update_streaks(
+    user_id: int,
+    current_streak: int,
+    best_streak: int,
+    daily_streak: int,
+    max_streak: int,
+    last_attempt_date: str
+):
+    with get_db() as conn:
+        conn.execute("""
+        UPDATE scores_global
+        SET
+            current_streak = ?,
+            best_streak = ?,
+            daily_streak = ?,
+            max_streak = ?,
+            last_attempt_date = ?
+        WHERE user_id = ?
+        """, (
+            current_streak,
+            best_streak,
+            daily_streak,
+            max_streak,
+            last_attempt_date,
+            user_id
+        ))
 
 # ================= FOOTER SETTINGS =================
 
