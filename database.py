@@ -690,3 +690,11 @@ def get_users_who_attempted():
 # -------------------------
 # MAIN
 # -------------------------
+
+if __name__ == "__main__":
+    init_db()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+        print([r["name"] for r in rows])
