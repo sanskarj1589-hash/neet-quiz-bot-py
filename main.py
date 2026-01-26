@@ -210,37 +210,6 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(apply_footer(text))
 
-async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    with db.get_db() as cur:
-        cur.execute("SELECT * FROM stats WHERE user_id = %s", (user.id,))
-        s = cur.fetchone()
-        
-        rank_val = 0
-        if s:
-            cur.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > %s", (s['score'],))
-            rank_val = cur.fetchone()['count']
-
-        g_rank = "N/A"
-        if update.effective_chat.type != 'private' and s:
-            cur.execute("SELECT COUNT(*) + 1 FROM group_stats WHERE chat_id = %s AND score > %s", 
-                              (update.effective_chat.id, s['score']))
-            g_rank = f"#{cur.fetchone()['count']}"
-
-    if not s:
-        return await update.message.reply_text("❌ *No statistics available yet!*")
-
-    accuracy = (s['correct'] / s['attempted'] * 100) if s['attempted'] > 0 else 0
-    text = (
-        "📊 *Detailed Performance Stats*\n\n"
-        f"📘 Total Attempts: `{s['attempted']}`\n"
-        f"✅ Correct: `{s['correct']}`\n"
-        f"🎯 Accuracy: `{accuracy:.2f}%`\n"
-        f"🏆 Lifetime Score: `{s['score']}`\n"
-        f"🌍 Global Rank: `#{rank_val}`\n"
-        f"👥 Group Rank: `{g_rank}`"
-    )
-    await update.message.reply_text(apply_footer(text))
 
 # ---------------- LEADERBOARD LOGIC ----------------
 
@@ -274,15 +243,7 @@ async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(apply_footer(text))
 # ---------------- ADMIN & MANAGEMENT ----------------
 
-async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    try:
-        new_admin = int(context.args[0])
-        with db.get_db() as cur:
-            cur.execute("INSERT INTO admins (user_id, added_at) VALUES (%s,%s) ON CONFLICT DO NOTHING", 
-                        (new_admin, str(datetime.now())))
-        await update.message.reply_text(f"✅ User `{new_admin}` added as Admin.")
-    except: await update.message.reply_text("❌ Usage: /addadmin <user_id>")
+
 
 async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update.effective_user.id): return
@@ -310,26 +271,6 @@ async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 added += 1
     await update.message.reply_text(f"✅ Successfully added `{added}` questions.")
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id): return
-    msg = " ".join(context.args)
-    if not msg: return await update.message.reply_text("❌ Usage: /broadcast <message>")
-    
-    with db.get_db() as cur:
-        cur.execute("SELECT user_id FROM users")
-        users = cur.fetchall()
-        cur.execute("SELECT chat_id FROM chats")
-        chats = cur.fetchall()
-
-    count = 0
-    for r in users + chats:
-        try:
-            target_id = r.get('user_id') or r.get('chat_id')
-            await context.bot.send_message(chat_id=target_id, text=f"📢 *NEETIQ BROADCAST*\n\n{msg}")
-            count += 1
-            await asyncio.sleep(0.05)
-        except: continue
-    await update.message.reply_text(f"✅ Broadcast sent to `{count}` recipients.")
 
 # ---------------- GROUP CUSTOMIZATION ----------------
 
