@@ -385,6 +385,7 @@ db.update_group_stats(
 
 # ---------------- COMPLIMENTS ----------------
 
+
 @admin_only
 async def addcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
@@ -398,12 +399,11 @@ async def addcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args[1:])
 
     if ctype not in ("correct", "wrong"):
-        await update.message.reply_text("❌ Type must be `correct` or `wrong`.")
+        await update.message.reply_text("❌ Type must be correct or wrong.")
         return
 
     db.add_compliment(ctype, text)
     await update.message.reply_text("✅ Compliment added successfully.")
-
 
 @admin_only
 async def delcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -418,20 +418,27 @@ async def delcompliment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ Invalid compliment ID.")
 
-
 @admin_only
 async def listcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = db.list_compliments()
-
     if not rows:
         await update.message.reply_text("⚠️ No compliments found.")
         return
 
-    text = "💬 *Compliments List*\n\n"
-    for r in rows:
-        text += f"ID `{r['id']}` | {r['type']} → {r['text']}\n"
+    chunks = []
+    current = "💬 *Compliments List*\n\n"
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    for r in rows:
+        line = f"ID `{r['id']}` | {r['type']} → {r['text']}\n"
+        if len(current) + len(line) > 3500:
+            chunks.append(current)
+            current = ""
+        current += line
+
+    chunks.append(current)
+
+    for c in chunks:
+        await update.message.reply_text(c, parse_mode="Markdown")
 
 
 @group_admin_only
@@ -507,7 +514,6 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text)
 
-
 async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
@@ -520,16 +526,18 @@ async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 No group leaderboard data yet.")
         return
 
-    text = "👥 Group Leaderboard (Top 25)\n\n"
+    group_name = chat.title or "This Group"
+    text = f"👥 *{group_name} Leaderboard (Top 25)*\n\n"
+
     for i, row in enumerate(rows, start=1):
         text += (
-            f"🥇 {row['name']}\n"
+            f"{i}. {row['name']}\n"
             f"📘 Attempted: {row['attempted']} | "
             f"✅ Correct: {row['correct']} | "
             f"🏆 Score: {row['score']}\n\n"
         )
 
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ---------------- USER STATS ----------------
