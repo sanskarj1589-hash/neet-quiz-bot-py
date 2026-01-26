@@ -300,22 +300,22 @@ def get_global_leaderboard(limit=25):
         LIMIT ?
         """, (limit,)).fetchall()
 
-
 def get_group_leaderboard(chat_id, limit=25):
     with get_conn() as conn:
-        rows = conn.execute("""
-        SELECT 
-            u.first_name AS name,
-            gs.attempted,
-            gs.correct,
-            gs.score
-        FROM group_stats gs
-        JOIN users u ON u.user_id = gs.user_id
-        WHERE gs.chat_id = ?
-        ORDER BY gs.score DESC
-        LIMIT ?
-        """, (chat_id, limit)).fetchall()
-        return rows
+        cur = conn.execute("""
+            SELECT 
+                u.first_name AS name,
+                COUNT(a.id) AS attempted,
+                SUM(CASE WHEN a.correct = 1 THEN 1 ELSE 0 END) AS correct,
+                SUM(CASE WHEN a.correct = 1 THEN 1 ELSE -1 END) AS score
+            FROM attempts a
+            JOIN users u ON u.user_id = a.user_id
+            WHERE a.chat_id = ?
+            GROUP BY a.user_id
+            ORDER BY score DESC
+            LIMIT ?
+        """, (chat_id, limit))
+        return [dict(row) for row in cur.fetchall()]
 
 
 # ---------- COMPLIMENTS ----------
