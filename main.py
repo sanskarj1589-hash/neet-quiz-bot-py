@@ -244,6 +244,7 @@ async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- ADMIN & MANAGEMENT ----------------
 
 
+import re
 
 async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update.effective_user.id): return
@@ -253,23 +254,32 @@ async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await update.message.document.get_file()
         content = await file.download_as_bytearray()
         text = content.decode('utf-8')
-    elif context.args:
-        text = " ".join(context.args)
     else:
-        return await update.message.reply_text("📂 Please send a .txt file or text with format:\n`Question | A | B | C | D | Correct(1-4) | Explanation`")
+        # Get text after /addquestion
+        parts = update.message.text.split(None, 1)
+        text = parts[1] if len(parts) > 1 else ""
 
-    added = 0
-    lines = text.strip().split('\n')
+    if not text:
+        return await update.message.reply_text("📂 Please provide questions in the numbered format.")
+
+    # Regex to split by "1. ", "2. ", etc.
+    q_blocks = re.split(r'\n\d+\.\s+', "\n" + text.strip())[1:]
+    
+    added_count = 0
     with db.get_db() as cur:
-        for line in lines:
-            parts = [p.strip() for p in line.split('|')]
-            if len(parts) >= 7:
+        for block in q_blocks:
+            lines = [l.strip() for l in block.split('\n') if l.strip()]
+            if len(lines) >= 7:
+                # Question | A | B | C | D | Correct | Explanation
+                # lines[1][3:] removes the "A. " prefix
                 cur.execute(
                     "INSERT INTO questions (question, a, b, c, d, correct, explanation) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                    (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6])
+                    (lines[0], lines[1][3:], lines[2][3:], lines[3][3:], lines[4][3:], lines[5], lines[6])
                 )
-                added += 1
-    await update.message.reply_text(f"✅ Successfully added `{added}` questions.")
+                added_count += 1
+    
+    await update.message.reply_text(f"✅ Successfully added `{added_count}` questions.")
+    
 
 
 # ---------------- GROUP CUSTOMIZATION ----------------
@@ -435,6 +445,136 @@ async def questions_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         res = cur.fetchone()
     await update.message.reply_text(f"📚 *Question Bank Status*\nTotal MCQs remaining: `{res['count']}`")
 
+# 1. ADMIN MANAGEMENT FIXES
+async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    try:
+        admin_id = int(context.args[0])
+        with db.get_db() as cur:
+            cur.execute("INSERT INTO admins (user_id, added_at) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
+                        (admin_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        await update.message.reply_text(f"✅ User `{admin_id}` added as Admin.")
+    except: await update.message.reply_text("❌ Usage: /addadmin <user_id>")
+
+# 2. BROADCAST (Preserves spacing and shows separate counts)
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update.effective_user.id): return
+    # msg_text_raw preserves the exact spacing/formatting from your message
+    msg_text = update.message.text_markdown.split(None, 1)[1] if len(context.args) > 0 else None
+    if not msg_text: return await update.message.reply_text("❌ Usage: /broadcast <message>")
+    
+    with db.get_db() as cur:
+        cur.execute("SELECT user_id FROM users")
+        users = cur.fetchall()
+        cur.execute("SELECT chat_id FROM chats")
+        chats = cur.fetchall()
+
+    u_success, g_success = 0, 0
+    for u in users:
+        try:
+            await context.bot.send_message(chat_id=u['user_id'], text=msg_text)
+            u_success += 1
+            await asyncio.sleep(0.05) # Prevent spam limits
+        except: continue
+    for c in chats:
+        try:
+            await context.bot.send_message(chat_id=c['chat_id'], text=msg_text)
+            g_success += 1
+            await asyncio.sleep(0.05)
+        except: continue
+    
+    await update.message.reply_text(f"✅ *Broadcast Complete:*\nUsers: {u_success}\nGroups: {g_success}")
+
+# 3. BOT STATS (Your exact requested layout)
+async def bot_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update.effective_user.id): return
+    data = db.get_bot_stats()
+    text = (
+        "🤖 *NEETIQ Master Bot Statistics*\n\n"
+        f"👤 Total Users: {data['users']}\n"
+        f"👥 Total Groups: {data['groups']}\n"
+        f"👮 Total Admins: {data['admins']}\n\n"
+        "📊 *Database Growth*\n\n"
+        f"❓ Total Questions left: {data['q_left']}\n"
+        f"📝 Total questions conducted: {data['q_conducted']}\n"
+        f"📝 Total Global Attempts [today]: {data['att_today']}\n"
+        f"📝 Total Global Attempts: {data['att_total']}"
+    )
+    await update.message.reply_text(apply_footer(text))
+
+# 4. MY STATS (Detailed performance with Ranks)
+async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    with db.get_db() as cur:
+        cur.execute("SELECT * FROM stats WHERE user_id = %s", (user.id,))
+        s = cur.fetchone()
+        
+        # Calculate Global Rank
+        rank_val = "N/A"
+        if s:
+            cur.execute("SELECT COUNT(*) + 1 as rank FROM stats WHERE score > %s", (s['score'],))
+            rank_val = f"#{cur.fetchone()['rank']}"
+
+        # Calculate Group Rank
+        g_rank = "N/A"
+        if update.effective_chat.type != 'private' and s:
+            cur.execute("SELECT COUNT(*) + 1 as rank FROM group_stats WHERE chat_id = %s AND score > %s", 
+                        (update.effective_chat.id, s['score']))
+            g_rank = f"#{cur.fetchone()['rank']}"
+
+    if not s: return await update.message.reply_text("❌ *No stats found. Play a quiz first!*")
+
+    wrong = s['attempted'] - s['correct']
+    accuracy = (s['correct'] / s['attempted'] * 100) if s['attempted'] > 0 else 0
+    
+    text = (
+        "📊 *Detailed Performance Stats*\n\n"
+        f"📘 Total Attempts: {s['attempted']}\n"
+        f"✅ Correct: {s['correct']}\n"
+        f"❌ Wrong: {wrong}\n"
+        f"🎯 Accuracy: {accuracy:.2f}%\n"
+        f"🔥 Best Streak: {s['max_streak']}\n\n"
+        f"🌞 Current Streak: {s['current_streak']}\n"
+        f"🏆 Lifetime Score: {s['score']}\n\n"
+        f"🌍 Global Rank: {rank_val}\n"
+        f"👥 Group Rank: {g_rank}"
+    )
+    await update.message.reply_text(apply_footer(text))
+
+# 5. COMP_TOGGLE
+async def comp_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == 'private': return
+    # Admin check for the group
+    member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
+    if member.status not in ['administrator', 'creator'] and update.effective_user.id != OWNER_ID: return
+
+    if not context.args: return await update.message.reply_text("❌ Usage: /comp_toggle <on/off>")
+    
+    choice = context.args[0].lower()
+    val = 1 if choice == 'on' else 0
+    with db.get_db() as cur:
+        cur.execute("INSERT INTO group_settings (chat_id, compliments_enabled) VALUES (%s, %s) "
+                    "ON CONFLICT (chat_id) DO UPDATE SET compliments_enabled = EXCLUDED.compliments_enabled", 
+                    (update.effective_chat.id, val))
+    await update.message.reply_text(f"✅ Compliments turned *{choice.upper()}* for this group.")
+
+
+async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
+    rows = db.get_leaderboard_data(limit=10)
+    if not rows: return
+    
+    text = "🏆 *Nightly Global Leaderboard (Top 10)*\n\n"
+    for i, r in enumerate(rows, 1):
+        text += f"{i}. *{r['first_name']}* — {r['score']} pts\n"
+    
+    # Send to all groups in the database
+    with db.get_db() as cur:
+        cur.execute("SELECT chat_id FROM chats")
+        chats = cur.fetchall()
+        for chat in chats:
+            try: await context.bot.send_message(chat_id=chat['chat_id'], text=apply_footer(text))
+            except: continue
+                
 
 # ---------------- MAIN APP ----------------
 
@@ -465,7 +605,12 @@ if __name__ == '__main__':
     # Admin & Management Handlers
     app.add_handler(CommandHandler("removeadmin", remove_admin))
     app.add_handler(CommandHandler("questions", questions_stats))
-  
+
+        # Stats & Management Handlers
+    app.add_handler(CommandHandler("botstats", bot_stats_cmd))
+    app.add_handler(CommandHandler("comp_toggle", comp_toggle))
+
+    
     # Job Queue
     jq = app.job_queue
     interval_min = 30
@@ -478,6 +623,11 @@ if __name__ == '__main__':
         
     jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
 
+
+        # Add this line near your other job schedules
+    jq.run_daily(nightly_leaderboard_job, time=time(hour=21, minute=0, second=0))
+
+    
     print("🚀 NEETIQBot Master is Online on Render!")
     app.run_polling()
   
