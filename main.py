@@ -1,9 +1,13 @@
+
 import logging
 import asyncio
+import re
 from datetime import datetime, time
+from flask import Flask
+from threading import Thread
 from telegram import Update, Poll, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,   
+    Application,
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
@@ -15,17 +19,30 @@ from telegram.ext import (
 import database as db
 
 # ---------------- CONFIG ----------------
-# Replace with your actual Bot Token
-BOT_TOKEN = "8203396114:AAE_Ii9RuLvhCA64PRPwq1BZVc7bEPZmq0g"
+BOT_TOKEN = "MY_BOT_TOKEN"
 OWNER_ID = 6435499094
 
-# Logging setup
+# ---------------- RENDER KEEP-ALIVE ----------------
+web_app = Flask('')
+
+@web_app.route('/')
+def home():
+    return "NEETIQ Bot is Alive!"
+
+def run_web():
+    # Render looks for port 10000 by default
+    web_app.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
+
+# ---------------- LOGGING ----------------
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
 defaults = Defaults(parse_mode="Markdown")
 
 # ---------------- HELPERS ----------------
@@ -575,15 +592,19 @@ async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
         for chat in chats:
             try: await context.bot.send_message(chat_id=chat['chat_id'], text=apply_footer(text))
             except: continue
-                
-
 # ---------------- MAIN APP ----------------
 
-if __name__ == '__main__':
+async def main():
+    # Start the Flask web server to keep Render alive
+    keep_alive()
+    
+    # Initialize the PostgreSQL Database
     db.init_db()
-    app = ApplicationBuilder().token(BOT_TOKEN).defaults(defaults).build()
 
-    # Handlers
+    # Build the Telegram Application
+    app = ApplicationBuilder().token(BOT_TOKEN).defaults(defaults).build()
+    
+    # --- CORE HANDLERS ---
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("randomquiz", send_random_quiz))
@@ -591,45 +612,64 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("mystats", mystats))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
+    
+    # --- ADMIN & MANAGEMENT ---
     app.add_handler(CommandHandler("addadmin", add_admin))
+    app.add_handler(CommandHandler("removeadmin", remove_admin))
+    app.add_handler(CommandHandler("adminlist", adminlist))
     app.add_handler(CommandHandler("addquestion", addquestion))
+    app.add_handler(CommandHandler("questions", questions_stats))
     app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("setcomp", set_compliment))
+    app.add_handler(CommandHandler("botstats", bot_stats_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, addquestion))
+    
+    # --- QUIZ & GROUP SETTINGS ---
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(CommandHandler("footer", footer_cmd))
     app.add_handler(CommandHandler("autoquiz", autoquiz))
+    app.add_handler(CommandHandler("comp_toggle", comp_toggle))
+    app.add_handler(CommandHandler("setcomp", set_compliment))
     app.add_handler(CommandHandler("addcompliment", addcompliment))
     app.add_handler(CommandHandler("listcompliments", listcompliments))
     app.add_handler(CommandHandler("delcompliment", delcompliment))
-    app.add_handler(CommandHandler("adminlist", adminlist))
-    # Admin & Management Handlers
-    app.add_handler(CommandHandler("removeadmin", remove_admin))
-    app.add_handler(CommandHandler("questions", questions_stats))
 
-        # Stats & Management Handlers
-    app.add_handler(CommandHandler("botstats", bot_stats_cmd))
-    app.add_handler(CommandHandler("comp_toggle", comp_toggle))
-
-    
-    # Job Queue
+    # --- JOB QUEUE (SCHEDULING) ---
     jq = app.job_queue
+    
+    # Fetch autoquiz interval from database
     interval_min = 30
     try:
         with db.get_db() as cur:
             cur.execute("SELECT value FROM settings WHERE key='autoquiz_interval'")
             res = cur.fetchone()
-            if res: interval_min = int(res['value'])
-    except: pass
+            if res: 
+                interval_min = int(res['value'])
+    except Exception as e:
+        logger.error(f"Error fetching interval: {e}")
         
+    # Schedule Repeating Auto-Quiz
     jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
 
-
-        # Add this line near your other job schedules
+    # Schedule Daily Leaderboard at 21:00 (9:00 PM)
+    # Note: Make sure your server time is correct or use pytz for specific timezones
     jq.run_daily(nightly_leaderboard_job, time=time(hour=21, minute=0, second=0))
 
-    
+    # Start the Bot
     print("🚀 NEETIQBot Master is Online on Render!")
-    app.run_polling()
-  
-  
+    
+    # Since we are using asyncio.run(main()), we use run_polling directly
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    # Keep the bot running
+    while True:
+        await asyncio.sleep(1)
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("🛑 Bot Stopped.")
+    
+
