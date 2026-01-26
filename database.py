@@ -514,19 +514,10 @@ def get_group_rank(chat_id, user_id):
 
 def get_all_users():
     with get_db() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT user_id FROM users"
         ).fetchall()
-
-
-    with get_db() as conn:
-        return conn.execute(
-            """
-            SELECT chat_id
-            FROM chats
-            WHERE chat_type IN ('group', 'supergroup')
-            """
-        ).fetchall()
+        return [dict(r) for r in rows]
 
 def get_all_groups():
     with get_db() as conn:
