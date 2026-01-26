@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-import logging
-import os
 
-from datetime import time
-from telegram import Poll
-from telegram.ext import PollAnswerHandler
-import database as db
+import logging
+from datetime import datetime, time
 
 from telegram import (
     Update,
+    Poll,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    Chat
+    Chat,
 )
-from telegram import Update, Poll
+
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
