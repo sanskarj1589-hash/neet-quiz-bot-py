@@ -30,26 +30,31 @@ logger = logging.getLogger(__name__)
 defaults = Defaults(parse_mode="Markdown")
 
 # ---------------- HELPERS ----------------
-
 def apply_footer(text: str) -> str:
-    """Applies the professional divider and custom footer text."""
-    with db.get_db() as conn:
-        f_row = conn.execute("SELECT value FROM settings WHERE key='footer_text'").fetchone()
-        f_en = conn.execute("SELECT value FROM settings WHERE key='footer_enabled'").fetchone()
+    """Applies the professional divider and custom footer text (PostgreSQL version)."""
+    with db.get_db() as cur:
+        # PostgreSQL with RealDictCursor requires key-based access
+        cur.execute("SELECT value FROM settings WHERE key='footer_text'")
+        f_row = cur.fetchone()
+        
+        cur.execute("SELECT value FROM settings WHERE key='footer_enabled'")
+        f_en = cur.fetchone()
     
-    footer_text = f_row[0] if f_row else "NEETIQBot"
-    enabled = f_en[0] if f_en else "1"
+    footer_text = f_row['value'] if f_row else "NEETIQBot"
+    enabled = f_en['value'] if f_en else "1"
     
     if enabled == '1':
         return f"{text}\n\n━━━━━━━━━━━━━━━\n{footer_text}"
     return text
 
 async def is_admin(user_id: int) -> bool:
-    """Check if a user has admin privileges or is the owner."""
+    """Check if a user has admin privileges (PostgreSQL %s placeholder)."""
     if user_id == OWNER_ID:
         return True
-    with db.get_db() as conn:
-        res = conn.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,)).fetchone()
+    with db.get_db() as cur:
+        # Changed '?' to '%s' for PostgreSQL
+        cur.execute("SELECT 1 FROM admins WHERE user_id=%s", (user_id,))
+        res = cur.fetchone()
         return res is not None
 
 # ---------------- REGISTRATION ----------------
@@ -58,14 +63,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     
-    with db.get_db() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
+    with db.get_db() as cur:
+        # Changed 'INSERT OR IGNORE' to 'ON CONFLICT DO NOTHING'
+        cur.execute(
+            """INSERT INTO users (user_id, username, first_name, joined_at) 
+               VALUES (%s,%s,%s,%s) 
+               ON CONFLICT (user_id) DO NOTHING""",
             (user.id, user.username, user.first_name, str(datetime.now()))
         )
+        
         if chat.type != 'private':
-            conn.execute(
-                "INSERT OR IGNORE INTO chats (chat_id, type, title, added_at) VALUES (?,?,?,?)",
+            cur.execute(
+                """INSERT INTO chats (chat_id, type, title, added_at) 
+                   VALUES (%s,%s,%s,%s) 
+                   ON CONFLICT (chat_id) DO NOTHING""",
                 (chat.id, chat.type, chat.title, str(datetime.now()))
             )
 
@@ -81,6 +92,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         group_msg = f"🎉 *Group successfully registered with NEETIQBot!*\n\nPreparing {chat.title} for upcoming quizzes."
         await update.message.reply_text(apply_footer(group_msg))
+
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
