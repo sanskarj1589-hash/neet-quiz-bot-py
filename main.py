@@ -517,9 +517,12 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
-    if chat.type not in [Chat.GROUP, Chat.SUPERGROUP]:
+    if chat.type not in (Chat.GROUP, Chat.SUPERGROUP):
         await update.message.reply_text("⚠️ Use this command in a group.")
         return
+
+    # ✅ FIX 1: Always register group (critical)
+    db.add_group(chat.id, chat.title, chat.type)
 
     rows = db.get_group_leaderboard(chat.id, limit=25)
     if not rows:
@@ -527,8 +530,8 @@ async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     group_name = chat.title or "This Group"
-    text = f"👥 *{group_name} Leaderboard (Top 25)*\n\n"
 
+    text = f"👥 *{group_name} Leaderboard* (Top 25)\n\n"
     for i, row in enumerate(rows, start=1):
         text += (
             f"{i}. {row['name']}\n"
