@@ -362,6 +362,13 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         question_id=question_id,
         correct=is_correct
     )
+   # -------- GROUP STATS UPDATE --------
+db.update_group_stats(
+    chat_id=chat_id,
+    user_id=user.id,
+    correct=is_correct
+)
+
 
     # -------- STREAK LOGIC --------
     if is_correct:
