@@ -303,18 +303,19 @@ def get_global_leaderboard(limit=25):
 
 def get_group_leaderboard(chat_id, limit=25):
     with get_conn() as conn:
-        return conn.execute("""
-        SELECT u.name,
-               COUNT(a.question_id) as attempted,
-               SUM(a.correct) as correct,
-               SUM(a.correct)*4 as score
-        FROM attempts a
-        JOIN users u ON a.user_id=u.user_id
-        WHERE a.chat_id=?
-        GROUP BY a.user_id
-        ORDER BY score DESC
+        rows = conn.execute("""
+        SELECT 
+            u.first_name AS name,
+            gs.attempted,
+            gs.correct,
+            gs.score
+        FROM group_stats gs
+        JOIN users u ON u.user_id = gs.user_id
+        WHERE gs.chat_id = ?
+        ORDER BY gs.score DESC
         LIMIT ?
         """, (chat_id, limit)).fetchall()
+        return rows
 
 
 # ---------- COMPLIMENTS ----------
