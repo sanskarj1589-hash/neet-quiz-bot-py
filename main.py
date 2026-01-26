@@ -500,7 +500,6 @@ async def randomquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # mark + count + delete question
     db.mark_question_sent(chat_id, qid)
-    db.increment_attempted_questions()
     db.delete_question(qid)
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
