@@ -1,13 +1,19 @@
 import sqlite3
 import random
+import os
 from contextlib import contextmanager
 from datetime import datetime, date
+import libsql_client as libsql
 
-DB_NAME = "neetiq_master.db"
+# --- TURSO CONFIGURATION ---
+# These must be set in your Render environment variables
+DB_URL = os.getenv("TURSO_DATABASE_URL")
+DB_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_NAME, timeout=30)
+    # Connects to Turso cloud using the URL and Auth Token
+    conn = libsql.connect(DB_URL, auth_token=DB_TOKEN)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -18,19 +24,16 @@ def get_db():
 def init_db():
     with get_db() as conn:
         # --- 1. CORE SYSTEM TABLES ---
-        # Questions Bank
         conn.execute("""CREATE TABLE IF NOT EXISTS questions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             question TEXT, a TEXT, b TEXT, c TEXT, d TEXT, 
             correct TEXT, explanation TEXT)""")
 
-        # Poll Tracking (Crucial for scoring)
         conn.execute("""CREATE TABLE IF NOT EXISTS active_polls (
             poll_id TEXT PRIMARY KEY, 
             chat_id INTEGER, 
             correct_option_id INTEGER)""")
 
-        # Sent Questions (If you still use tracking)
         conn.execute("""CREATE TABLE IF NOT EXISTS sent_questions (
             chat_id INTEGER, 
             q_id INTEGER, 
@@ -52,7 +55,6 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, added_at TEXT)")
 
         # --- 3. STATS & SCORING ---
-        # Global Stats
         conn.execute("""CREATE TABLE IF NOT EXISTS stats (
             user_id INTEGER PRIMARY KEY, 
             attempted INTEGER DEFAULT 0,
@@ -62,7 +64,6 @@ def init_db():
             max_streak INTEGER DEFAULT 0, 
             last_date TEXT)""")
 
-        # Group Specific Stats
         conn.execute("""CREATE TABLE IF NOT EXISTS group_stats (
             chat_id INTEGER, 
             user_id INTEGER, 
@@ -72,19 +73,16 @@ def init_db():
             PRIMARY KEY(chat_id, user_id))""")
 
         # --- 4. COMPLIMENTS & GROUP CUSTOMIZATION ---
-        # Global Compliments (Default)
         conn.execute("""CREATE TABLE IF NOT EXISTS compliments (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             type TEXT, 
             text TEXT)""")
 
-        # Group-Specific Custom Compliments (/setcomp)
         conn.execute("""CREATE TABLE IF NOT EXISTS group_compliments (
             chat_id INTEGER, 
             type TEXT, 
             text TEXT)""")
 
-        # Group Settings (/comp_toggle)
         conn.execute("""CREATE TABLE IF NOT EXISTS group_settings (
             chat_id INTEGER PRIMARY KEY, 
             compliments_enabled INTEGER DEFAULT 1)""")
@@ -97,24 +95,24 @@ def init_db():
             ('footer_enabled', '1'),
             ('autoquiz_enabled', '0'),
             ('autoquiz_interval', '30'),
-            ('compliments_enabled', '1') # Global Master Switch
+            ('compliments_enabled', '1')
         ]
-        conn.executemany("INSERT OR IGNORE INTO settings VALUES (?,?)", defaults)
+        
+        # Iterative insert for better compatibility with cloud execution
+        for key, val in defaults:
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)", (key, val))
         
         conn.commit()
 
 def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
     today = str(date.today())
     with get_db() as conn:
-        # --- IMPROVED: Sync User Info ---
-        # We check for EITHER first_name or username to ensure we don't skip anyone
         if first_name or username:
             conn.execute("""
                 INSERT OR REPLACE INTO users (user_id, username, first_name, joined_at) 
                 VALUES (?, ?, ?, COALESCE((SELECT joined_at FROM users WHERE user_id=?), ?))
             """, (user_id, username, first_name, user_id, today))
 
-        # --- Stats Logic ---
         conn.execute("INSERT OR IGNORE INTO stats (user_id) VALUES (?)", (user_id,))
         s = conn.execute("SELECT * FROM stats WHERE user_id=?", (user_id,)).fetchone()
         
@@ -132,18 +130,8 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
                          correct=correct+? WHERE chat_id=? AND user_id=?""",
                          (points, 1 if is_correct else 0, chat_id, user_id))
 
-
-def get_compliment(c_type):
-    with get_db() as conn:
-        status = conn.execute("SELECT value FROM settings WHERE key='compliments_enabled'").fetchone()[0]
-        if status == '0': return None
-        res = conn.execute("SELECT text FROM compliments WHERE type=? ORDER BY RANDOM() LIMIT 1", (c_type,)).fetchone()
-        return res[0] if res else None
-
 def get_leaderboard_data(chat_id=None, limit=25):
     with get_db() as conn:
-        # Priority: @username -> first_name -> fallback text
-        # Using NULLIF to ensure empty strings aren't used
         name_logic = """
             COALESCE(
                 CASE WHEN u.username IS NOT NULL AND u.username != '' THEN '@' || u.username ELSE NULL END,
@@ -151,7 +139,6 @@ def get_leaderboard_data(chat_id=None, limit=25):
                 'Participant'
             )
         """
-        
         if chat_id:
             query = f"""
                 SELECT {name_logic}, gs.attempted, gs.correct, gs.score
@@ -168,9 +155,7 @@ def get_leaderboard_data(chat_id=None, limit=25):
             ORDER BY s.score DESC LIMIT ?"""
         return conn.execute(query, (limit,)).fetchall()
 
-
-
 if __name__ == "__main__":
     init_db()
-    print("✅ Database Master Layer Ready.")
-
+    print("✅ Turso Database Master Layer Ready.")
+            
