@@ -61,4 +61,4 @@ def get_leaderboard_data(chat_id=None, limit=25):
 
 if __name__ == '__main__':
     init_db()
-    
+
