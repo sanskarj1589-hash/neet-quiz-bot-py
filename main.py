@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import pytz 
+import os
 from datetime import datetime, time
 from telegram import Update, Poll, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,7 +17,7 @@ import database as db
 
 # ---------------- CONFIG ----------------
 # Replace with your actual Bot Token
-BOT_TOKEN = "MY_BOT_TOKEN"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = 6435499094
 
 # Logging setup
