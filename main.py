@@ -16,7 +16,7 @@ import database as db
 
 # ---------------- CONFIG ----------------
 # Replace with your actual Bot Token
-BOT_TOKEN = "8203396114:AAFIDeobXBWQ0ax3-vf2H6UPKpWp0gdGzrI"
+BOT_TOKEN = "MY_BOT_TOKEN"
 OWNER_ID = 6435499094
 
 # Logging setup
