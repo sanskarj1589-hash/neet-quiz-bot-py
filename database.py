@@ -4,8 +4,11 @@ from contextlib import contextmanager
 from datetime import date, datetime
 
 # These variables will be set in Render's Environment Variables
-TURSO_URL = os.getenv("TURSO_DATABASE_URL")
+raw_url = os.getenv("TURSO_DATABASE_URL") or ""
+# This automatically replaces wss:// or https:// with libsql://
+TURSO_URL = raw_url.replace("wss://", "libsql://").replace("https://", "libsql://")
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+
 
 @contextmanager
 def get_db():
