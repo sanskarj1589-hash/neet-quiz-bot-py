@@ -11,18 +11,19 @@ TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 @contextmanager
 def get_db():
-    """Context manager to handle Turso cloud connections."""
-    # Ensure the URL starts with https:// if you want to avoid WebSocket 505 errors
     url = TURSO_URL
-    if url.startswith("libsql://"):
+    # Force HTTPS to avoid the WebSocket 505 Handshake error
+    if url and url.startswith("libsql://"):
         url = url.replace("libsql://", "https://")
-    
+    elif url and url.startswith("wss://"):
+        url = url.replace("wss://", "https://")
+
     client = libsql_client.create_client_sync(url=url, auth_token=TURSO_AUTH_TOKEN)
     try:
         yield client
     finally:
         client.close()
-        
+    
 
 def init_db():
     """Initializes all tables on Turso cloud."""
