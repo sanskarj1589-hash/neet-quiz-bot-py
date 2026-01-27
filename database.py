@@ -7,22 +7,21 @@ from datetime import date, datetime
 raw_url = os.getenv("TURSO_DATABASE_URL") or ""
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
-# Standardize URL to HTTPS for compatibility with the sync client
+# Force HTTPS to ensure compatibility with the sync client and avoid 400/505 errors
 TURSO_URL = raw_url.replace("libsql://", "https://").replace("wss://", "https://")
 
 @contextmanager
 def get_db():
-    """Context manager to handle database connections."""
+    """Context manager to handle database connections cleanly."""
     client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
     try:
         yield client
     finally:
         client.close()
-
-def init_db():
-    """Initializes all tables on Turso cloud without restricted AUTOINCREMENT keyword."""
+        def init_db():
+    """Initializes tables. Removed AUTOINCREMENT to resolve Turso HTTP 400 error."""
     with get_db() as conn:
-        # Questions & Polls (Removed AUTOINCREMENT to fix 400 error)
+        # Questions & Polls - AUTOINCREMENT removed for Turso compatibility
         conn.execute("CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY, question TEXT, a TEXT, b TEXT, c TEXT, d TEXT, correct TEXT, explanation TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS active_polls (poll_id TEXT PRIMARY KEY, chat_id INTEGER, correct_option_id INTEGER)")
         conn.execute("CREATE TABLE IF NOT EXISTS sent_questions (chat_id INTEGER, q_id INTEGER, PRIMARY KEY(chat_id, q_id))")
@@ -36,7 +35,7 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS stats (user_id INTEGER PRIMARY KEY, attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, score INTEGER DEFAULT 0, current_streak INTEGER DEFAULT 0, max_streak INTEGER DEFAULT 0, last_date TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_stats (chat_id INTEGER, user_id INTEGER, score INTEGER DEFAULT 0, attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, PRIMARY KEY(chat_id, user_id))")
         
-        # Compliments & Settings
+        # Compliments & Settings - AUTOINCREMENT removed
         conn.execute("CREATE TABLE IF NOT EXISTS compliments (id INTEGER PRIMARY KEY, type TEXT, text TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_compliments (chat_id INTEGER, type TEXT, text TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_settings (chat_id INTEGER PRIMARY KEY, compliments_enabled INTEGER DEFAULT 1)")
@@ -52,8 +51,7 @@ def init_db():
         ]
         for key, val in defaults:
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val))
-
-def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
+        def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
     """Updates user performance data globally and for specific groups."""
     today = str(date.today())
     with get_db() as conn:
