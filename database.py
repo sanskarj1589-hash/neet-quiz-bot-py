@@ -19,10 +19,10 @@ def get_db():
     finally:
         client.close()
 
-  def init_db():
+def init_db():
     """Initializes all tables on Turso cloud without restricted AUTOINCREMENT keyword."""
     with get_db() as conn:
-        # Questions & Polls (Removed AUTOINCREMENT)
+        # Questions & Polls (Removed AUTOINCREMENT to fix 400 error)
         conn.execute("CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY, question TEXT, a TEXT, b TEXT, c TEXT, d TEXT, correct TEXT, explanation TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS active_polls (poll_id TEXT PRIMARY KEY, chat_id INTEGER, correct_option_id INTEGER)")
         conn.execute("CREATE TABLE IF NOT EXISTS sent_questions (chat_id INTEGER, q_id INTEGER, PRIMARY KEY(chat_id, q_id))")
@@ -36,7 +36,7 @@ def get_db():
         conn.execute("CREATE TABLE IF NOT EXISTS stats (user_id INTEGER PRIMARY KEY, attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, score INTEGER DEFAULT 0, current_streak INTEGER DEFAULT 0, max_streak INTEGER DEFAULT 0, last_date TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_stats (chat_id INTEGER, user_id INTEGER, score INTEGER DEFAULT 0, attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, PRIMARY KEY(chat_id, user_id))")
         
-        # Compliments & Settings (Removed AUTOINCREMENT)
+        # Compliments & Settings
         conn.execute("CREATE TABLE IF NOT EXISTS compliments (id INTEGER PRIMARY KEY, type TEXT, text TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_compliments (chat_id INTEGER, type TEXT, text TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_settings (chat_id INTEGER PRIMARY KEY, compliments_enabled INTEGER DEFAULT 1)")
@@ -107,4 +107,4 @@ def get_leaderboard_data(chat_id=None, limit=25):
 if __name__ == '__main__':
     init_db() 
     print("✅ Database Tables Verified/Created on Turso.")
-      
+    
