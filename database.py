@@ -1,6 +1,5 @@
-import sqlite3
-import random
 import os
+import random
 from contextlib import contextmanager
 from datetime import datetime, date
 import libsql_client as libsql
@@ -11,16 +10,12 @@ DB_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 @contextmanager
 def get_db():
-    # Fix: Using create_client_sync for the newer libsql_client versions
-    # This creates a connection compatible with your existing .execute() logic
+    # create_client_sync is the correct method for the current version of libsql-client
     client = libsql.create_client_sync(url=DB_URL, auth_token=DB_TOKEN)
     try:
         yield client
-        # client.commit() is usually handled automatically in sync mode, 
-        # but the client itself manages the session.
     finally:
         client.close()
-        
 
 def init_db():
     with get_db() as conn:
@@ -98,12 +93,8 @@ def init_db():
             ('autoquiz_interval', '30'),
             ('compliments_enabled', '1')
         ]
-        
-        # Iterative insert for better compatibility with cloud execution
         for key, val in defaults:
-            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)", (key, val))
-        
-        conn.commit()
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val))
 
 def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
     today = str(date.today())
@@ -115,11 +106,18 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
             """, (user_id, username, first_name, user_id, today))
 
         conn.execute("INSERT OR IGNORE INTO stats (user_id) VALUES (?)", (user_id,))
-        s = conn.execute("SELECT * FROM stats WHERE user_id=?", (user_id,)).fetchone()
+        
+        # Libsql sync client returns a Resultset where rows are accessible by index
+        res = conn.execute("SELECT attempted, correct, score, current_streak, max_streak FROM stats WHERE user_id=?", (user_id,))
+        s = res.fetchone()
         
         points = 4 if is_correct else -1
-        new_streak = s['current_streak'] + 1 if is_correct else 0
-        new_max = max(s['max_streak'], new_streak)
+        # Accessing by index: 3 is current_streak, 4 is max_streak
+        cur_streak = s[3] if s else 0
+        m_streak = s[4] if s else 0
+        
+        new_streak = cur_streak + 1 if is_correct else 0
+        new_max = max(m_streak, new_streak)
 
         conn.execute("""UPDATE stats SET attempted=attempted+1, correct=correct+?, 
                      score=score+?, current_streak=?, max_streak=?, last_date=?
@@ -131,6 +129,13 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
                          correct=correct+? WHERE chat_id=? AND user_id=?""",
                          (points, 1 if is_correct else 0, chat_id, user_id))
 
+def get_compliment(c_type):
+    with get_db() as conn:
+        status_row = conn.execute("SELECT value FROM settings WHERE key='compliments_enabled'").fetchone()
+        if not status_row or status_row[0] == '0': return None
+        res = conn.execute("SELECT text FROM compliments WHERE type=? ORDER BY RANDOM() LIMIT 1", (c_type,)).fetchone()
+        return res[0] if res else None
+
 def get_leaderboard_data(chat_id=None, limit=25):
     with get_db() as conn:
         name_logic = """
@@ -141,22 +146,13 @@ def get_leaderboard_data(chat_id=None, limit=25):
             )
         """
         if chat_id:
-            query = f"""
-                SELECT {name_logic}, gs.attempted, gs.correct, gs.score
-                FROM group_stats gs 
-                LEFT JOIN users u ON gs.user_id = u.user_id
-                WHERE gs.chat_id = ? 
-                ORDER BY gs.score DESC LIMIT ?"""
-            return conn.execute(query, (chat_id, limit)).fetchall()
+            query = f"SELECT {name_logic}, gs.attempted, gs.correct, gs.score FROM group_stats gs LEFT JOIN users u ON gs.user_id = u.user_id WHERE gs.chat_id = ? ORDER BY gs.score DESC LIMIT ?"
+            return conn.execute(query, (chat_id, limit)).rows
         
-        query = f"""
-            SELECT {name_logic}, s.attempted, s.correct, s.score
-            FROM stats s 
-            LEFT JOIN users u ON s.user_id = u.user_id
-            ORDER BY s.score DESC LIMIT ?"""
-        return conn.execute(query, (limit,)).fetchall()
+        query = f"SELECT {name_logic}, s.attempted, s.correct, s.score FROM stats s LEFT JOIN users u ON s.user_id = u.user_id ORDER BY s.score DESC LIMIT ?"
+        return conn.execute(query, (limit,)).rows
 
 if __name__ == "__main__":
     init_db()
-    print("✅ Turso Database Master Layer Ready.")
-            
+    print("✅ Turso Database Ready.")
+        
