@@ -1,3 +1,2 @@
-python-telegram-bot[job-queue]==20.8
-psycopg2-binary
-flask
+python-telegram-bot
+libsql-client
