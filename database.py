@@ -5,7 +5,9 @@ import libsql_client as libsql
 
 # --- TURSO CONFIGURATION (Direct Links) ---
 # Hardcoded as requested to avoid environment variable issues
-DB_URL = "libsql://neetiq-db-sanskarj1589-hash.aws-ap-south-1.turso.io"
+# Change "libsql://" to "https://"
+DB_URL = "https://neetiq-db-sanskarj1589-hash.aws-ap-south-1.turso.io"
+# Ensure your token is correct
 # REPLACE 'your_auth_token_here' with your actual token from the Turso dashboard
 DB_TOKEN = "-db-sanskarj1589-hash.aws-ap-south-1.turso.io"
 
