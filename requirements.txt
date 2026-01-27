@@ -1,3 +1,4 @@
-python-telegram-bot
-libsql-client
+libsql-client>=0.4.0
+python-telegram-bot[job-queue]
 pytz
+aiohttp>=3.9.0
