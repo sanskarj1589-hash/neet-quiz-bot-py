@@ -6,20 +6,21 @@ from datetime import datetime, date
 import libsql_client as libsql
 
 # --- TURSO CONFIGURATION ---
-# These must be set in your Render environment variables
 DB_URL = os.getenv("TURSO_DATABASE_URL")
 DB_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 @contextmanager
 def get_db():
-    # Connects to Turso cloud using the URL and Auth Token
-    conn = libsql.connect(DB_URL, auth_token=DB_TOKEN)
-    conn.row_factory = sqlite3.Row
+    # Fix: Using create_client_sync for the newer libsql_client versions
+    # This creates a connection compatible with your existing .execute() logic
+    client = libsql.create_client_sync(url=DB_URL, auth_token=DB_TOKEN)
     try:
-        yield conn
-        conn.commit()
+        yield client
+        # client.commit() is usually handled automatically in sync mode, 
+        # but the client itself manages the session.
     finally:
-        conn.close()
+        client.close()
+        
 
 def init_db():
     with get_db() as conn:
