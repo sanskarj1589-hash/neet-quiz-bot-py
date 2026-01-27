@@ -3,22 +3,46 @@ from contextlib import contextmanager
 from datetime import datetime, date
 import libsql_client as libsql
 
-# --- TURSO CONFIGURATION (Direct Links) ---
-# Hardcoded as requested to avoid environment variable issues
-# Change "libsql://" to "https://"
+# --- TURSO CONFIGURATION ---
 DB_URL = "https://neetiq-db-sanskarj1589-hash.aws-ap-south-1.turso.io"
-# Ensure your token is correct
-# REPLACE 'your_auth_token_here' with your actual token from the Turso dashboard
 DB_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3Njk1MTU0MTksImlkIjoiYmZkYjZlOGUtMGJmNS00Nzg3LThjNGYtOWQ4ODY2ZGY3Mjk1IiwicmlkIjoiZTY0MmQ1YjgtZTYwMy00ZjE3LWE4M2EtZjlkOTg4ODQ0N2Q3In0.6Hh3ioXIPetRRd_jHcfR8xWRV8mOVGNn_1FeyVJeJirk9UGajwMnJ5_Sn1pYAdsLR_hojZZPXEtXuPfaGGD_Bw"
+"
+
+class LibsqlWrapper:
+    """A wrapper to make Libsql look like standard SQLite for main.py"""
+    def __init__(self, client):
+        self.client = client
+        self.last_result = None
+
+    def execute(self, stmt, args=None):
+        # This allows conn.execute(query).fetchone() to work
+        self.last_result = self.client.execute(stmt, args or [])
+        return self
+
+    def fetchone(self):
+        if self.last_result and self.last_result.rows:
+            return self.last_result.rows[0]
+        return None
+
+    def fetchall(self):
+        if self.last_result:
+            return self.last_result.rows
+        return []
+
+    def close(self):
+        self.client.close()
 
 @contextmanager
 def get_db():
-    # Using create_client_sync to avoid the 'connect' AttributeError
     client = libsql.create_client_sync(url=DB_URL, auth_token=DB_TOKEN)
+    wrapper = LibsqlWrapper(client)
     try:
-        yield client
+        yield wrapper
     finally:
-        client.close()
+        wrapper.close()
+
+# Keep your init_db() and other functions exactly as they were 
+# but make sure they use the get_db() context manager.
 
 def init_db():
     with get_db() as conn:
