@@ -9,7 +9,7 @@ import libsql_client as libsql
 DB_URL = "https://neetiq-db-sanskarj1589-hash.aws-ap-south-1.turso.io"
 # Ensure your token is correct
 # REPLACE 'your_auth_token_here' with your actual token from the Turso dashboard
-DB_TOKEN = "-db-sanskarj1589-hash.aws-ap-south-1.turso.io"
+DB_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3Njk1MTU0MTksImlkIjoiYmZkYjZlOGUtMGJmNS00Nzg3LThjNGYtOWQ4ODY2ZGY3Mjk1IiwicmlkIjoiZTY0MmQ1YjgtZTYwMy00ZjE3LWE4M2EtZjlkOTg4ODQ0N2Q3In0.6Hh3ioXIPetRRd_jHcfR8xWRV8mOVGNn_1FeyVJeJirk9UGajwMnJ5_Sn1pYAdsLR_hojZZPXEtXuPfaGGD_Bw"
 
 @contextmanager
 def get_db():
