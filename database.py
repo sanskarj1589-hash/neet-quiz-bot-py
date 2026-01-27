@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 raw_url = os.getenv("TURSO_DATABASE_URL") or ""
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+# Ensures the URL is in the correct format for Turso
 TURSO_URL = raw_url.replace("libsql://", "https://").replace("wss://", "https://")
 
 @contextmanager
@@ -17,6 +18,7 @@ def get_db():
 
 def init_db():
     with get_db() as conn:
+        # INTEGER PRIMARY KEY handles auto-incrementing automatically in LibSQL
         conn.execute("CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY, question TEXT, a TEXT, b TEXT, c TEXT, d TEXT, correct TEXT, explanation TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS active_polls (poll_id TEXT PRIMARY KEY, chat_id INTEGER, correct_option_id INTEGER)")
         conn.execute("CREATE TABLE IF NOT EXISTS sent_questions (chat_id INTEGER, q_id INTEGER, PRIMARY KEY(chat_id, q_id))")
@@ -59,5 +61,4 @@ def get_leaderboard_data(chat_id=None, limit=25):
 
 if __name__ == '__main__':
     init_db()
-    print("✅ Database Verified.")
-        
+    
