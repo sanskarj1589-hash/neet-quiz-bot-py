@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Professional Defaults (MarkdownV2 for cleaner text)
 # Note: Using standard Markdown for simplicity to avoid escape errors
-defaults = Defaults(parse_mode="Markdown")
+defaults = Defaults(parse_mode=None)
 
 # ---------------- HELPERS ----------------
 
