@@ -9,16 +9,20 @@ raw_url = os.getenv("TURSO_DATABASE_URL") or ""
 TURSO_URL = raw_url.replace("wss://", "libsql://").replace("https://", "libsql://")
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
-
 @contextmanager
 def get_db():
     """Context manager to handle Turso cloud connections."""
-    # create_client_sync allows us to use standard blocking code like sqlite3
-    client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
+    # Ensure the URL starts with https:// if you want to avoid WebSocket 505 errors
+    url = TURSO_URL
+    if url.startswith("libsql://"):
+        url = url.replace("libsql://", "https://")
+    
+    client = libsql_client.create_client_sync(url=url, auth_token=TURSO_AUTH_TOKEN)
     try:
         yield client
     finally:
         client.close()
+        
 
 def init_db():
     """Initializes all tables on Turso cloud."""
