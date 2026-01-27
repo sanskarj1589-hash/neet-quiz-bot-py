@@ -101,4 +101,9 @@ def get_leaderboard_data(chat_id=None, limit=25):
         
         query = f"SELECT {name_logic}, s.attempted, s.correct, s.score FROM stats s LEFT JOIN users u ON s.user_id = u.user_id ORDER BY s.score DESC LIMIT ?"
         return conn.execute(query, (limit,)).rows
-          
+
+if __name__ == '__main__':
+    # This line creates all your tables on Turso if they don't exist yet
+    db.init_db() 
+    print("✅ Database Tables Verified/Created on Turso.")
+    
