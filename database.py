@@ -1,19 +1,21 @@
-import sqlite3
-import random
+import os
+import libsql_client
 from contextlib import contextmanager
-from datetime import datetime, date
 
-DB_NAME = "neetiq_master.db"
+# On Render, we will store these in 'Environment Variables'
+TURSO_URL = os.getenv("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_NAME, timeout=30)
-    conn.row_factory = sqlite3.Row
+    # This connects to your Turso cloud database
+    conn = libsql_client.connect(TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
     try:
         yield conn
-        conn.commit()
+        # Note: libsql-client handles commits automatically in many cases
     finally:
         conn.close()
+        
 
 def init_db():
     with get_db() as conn:
