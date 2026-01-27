@@ -1,4 +1,5 @@
-libsql-client>=0.4.0
+# Use the stable version available on PyPI
+libsql-client==0.3.1
 python-telegram-bot[job-queue]
 pytz
 aiohttp>=3.9.0
