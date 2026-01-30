@@ -1,5 +1,10 @@
 import libsql_client
-from config import TURSO_URL, TURSO_TOKEN
+import os
+# Replace the 'from config import...' line with this:
+TURSO_URL = os.environ.get("TURSO_URL")
+TURSO_TOKEN = os.environ.get("TURSO_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
 from contextlib import contextmanager
 from datetime import datetime
 
