@@ -635,30 +635,7 @@ async def delallcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ *Error:* {e}")
 
 
-# ---------------- BROADCAST ----------------
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id): return
-    msg_text = " ".join(context.args)
-    if not msg_text: return await update.message.reply_text("❌ Usage: `/broadcast <message>`")
-
-    with db.get_db() as conn:
-        users = conn.execute("SELECT user_id FROM users").fetchall()
-        groups = conn.execute("SELECT chat_id FROM chats").fetchall()
-
-    u_ok, g_ok = 0, 0
-    for u in users:
-        try:
-            await context.bot.send_message(u[0], f"📢 *NEETIQ ANNOUNCEMENT*\n\n{msg_text}")
-            u_ok += 1
-        except: pass
-    for g in groups:
-        try:
-            await context.bot.send_message(g[0], f"📢 *NEETIQ ANNOUNCEMENT*\n\n{msg_text}")
-            g_ok += 1
-        except: pass
-
-    await update.message.reply_text(f"✅ *Broadcast Complete:*\nUsers: `{u_ok}`\nGroups: `{g_ok}`")
 
 
 # ---------------- SETTINGS (FOOTER & AUTOQUIZ) ----------------
