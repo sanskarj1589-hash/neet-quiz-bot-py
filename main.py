@@ -3,6 +3,7 @@ import asyncio
 import pytz 
 import html
 from html import escape
+from jobs import auto_quiz_job, nightly_leaderboard_job
 from telegram.constants import ParseMode
 from datetime import datetime, time
 from telegram.error import Forbidden, BadRequest
@@ -778,7 +779,7 @@ async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
     correct_map = {'1': 0, '2': 1, '3': 2, '4': 3, 'A': 0, 'B': 1, 'C': 2, 'D': 3}
     c_idx = correct_map.get(str(q[6]).upper(), 0)
 
-    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    divider = "<b>━━━━━━━━━━━━━━━━━</b>"
     question_text = f"🧠 <b>NEET MCQ (Global Quiz)</b>\n{divider}\n\n{q[1]}"
     explanation_text = f"📖 <b>Explanation:</b>\n{q[7]}"
 
