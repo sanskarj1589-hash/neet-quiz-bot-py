@@ -18,6 +18,25 @@ from telegram.ext import (
 )
 import database as db
 
+from threading import Thread
+from flask import Flask
+
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "I am alive!"
+
+def run():
+    # Render provides the PORT environment variable automatically
+    port = int(os.environ.get("PORT", 8080))
+    app_flask.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+	
+
 
 
 # ---------------- CONFIG ----------------
