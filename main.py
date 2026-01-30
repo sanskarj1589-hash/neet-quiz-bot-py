@@ -22,8 +22,12 @@ import database as db
 
 # ---------------- CONFIG ----------------
 # Replace with your actual Bot Token
-BOT_TOKEN = "8203396114:AAFIDeobXBWQ0ax3-vf2H6UPKpWp0gdGzrI"
-OWNER_ID = 6435499094
+import os
+
+# --- CONFIGURATION (Environment Variables) ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+OWNER_ID = int(os.environ.get("OWNER_ID", "6435499094"))
+SOURCE_GROUP_ID = int(os.environ.get("SOURCE_GROUP_ID", "-1003729584653"))
 
 # Logging setup
 logging.basicConfig(
