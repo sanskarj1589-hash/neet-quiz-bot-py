@@ -180,6 +180,101 @@ async def send_random_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in Quiz Flow: {e}")
         await update.message.reply_text("❌ Failed to process the quiz. Please check database logs.")
 
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes the user's answer, updates stats, and sends HTML compliments."""
+    answer = update.poll_answer
+    poll_id = answer.poll_id
+    user = answer.user  
+    
+    if not user:
+        return # Handle cases where user info isn't available
+        
+    user_id = user.id
+    username = user.username
+    first_name = user.first_name
+
+    # 1. SYNC & FETCH: Update user info and get poll data in one go if your DB allows, 
+    # but here we'll keep the logic clean for your current structure.
+    with db.get_db() as conn:
+        # Refresh user info
+        conn.execute("""
+            INSERT INTO users (user_id, username, first_name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name
+        """, (user_id, username, first_name))
+        
+        # Retrieve Poll Data
+        poll_data = conn.execute(
+            "SELECT chat_id, correct_option_id FROM active_polls WHERE poll_id = ?", 
+            (poll_id,)
+        ).fetchone()
+
+    if not poll_data:
+        return
+
+    chat_id = poll_data[0]
+    correct_option = poll_data[1]
+    # Check if the chosen option is correct
+    is_correct = (len(answer.option_ids) > 0 and answer.option_ids[0] == correct_option)
+
+    # 2. Update Scoring Stats
+    db.update_user_stats(
+        user_id,
+        chat_id,
+        is_correct,
+        username=username,
+        first_name=first_name
+    )
+
+    # 3. Compliment System (HTML Redesign)
+    with db.get_db() as conn:
+        # Check if compliments are enabled for this group
+        setting = conn.execute(
+            "SELECT compliments_enabled FROM group_settings WHERE chat_id = ?", 
+            (chat_id,)
+        ).fetchone()
+        
+        if setting and setting[0] == 0:
+            return
+
+        c_type = "correct" if is_correct else "wrong"
+
+        # Fetch random compliment (Try group-specific first, then global)
+        comp = conn.execute("""
+            SELECT text FROM group_compliments WHERE chat_id = ? AND type = ? 
+            UNION ALL 
+            SELECT text FROM compliments WHERE type = ? 
+            ORDER BY RANDOM() LIMIT 1
+        """, (chat_id, c_type, c_type)).fetchone()
+
+    if comp:
+        compliment_text = comp[0]
+        
+        # --- REDESIGNED HTML MENTION ---
+        safe_name = html.escape(first_name)
+        if username:
+            # Bolder mention for users with usernames
+            mention_name = f"<b>@{html.escape(username)}</b>"
+        else:
+            # Clickable bold mention for users without usernames
+            mention_name = f'<b><a href="tg://user?id={user_id}">{safe_name}</a></b>'
+            
+        final_text = compliment_text.replace("{user}", mention_name)
+
+        # Send only to groups (chat_id < 0)
+        if chat_id < 0:
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id, 
+                    text=final_text, 
+                    parse_mode="HTML",
+                    disable_web_page_preview=True
+                )
+            except Exception as e:
+                print(f"Error sending compliment: {e}")
+					
 # ---------------- PERFORMANCE STATS ----------------
 
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -202,75 +297,6 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-
-    with db.get_db() as conn:
-        s = conn.execute("SELECT * FROM stats WHERE user_id = ?", (user.id,)).fetchone()
-        
-        global_rank = "N/A"
-        if s:
-            g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (s['score'],)).fetchone()
-            global_rank = g_rank_row[0]
-
-        group_rank = "N/A"
-        if update.effective_chat.type != 'private' and s:
-            gr_row = conn.execute("SELECT COUNT(*) + 1 FROM group_stats WHERE chat_id = ? AND score > ?",
-                                 (chat_id, s['score'])).fetchone()
-            group_rank = gr_row[0]
-
-    if not s:
-        return await update.message.reply_text("❌ <b>No statistics available!</b>", parse_mode=ParseMode.HTML)
-
-    # 1. Performance Calculations
-    accuracy = (s['correct'] / s['attempted'] * 100) if s['attempted'] > 0 else 0
-
-    # 2. NEET marking: +4 for Correct, -1 for Wrong
-    wrong = s['attempted'] - s['correct']
-    xp = (s['correct'] * 4) - (wrong * 1)
-    xp = max(0, xp)  # Prevent negative XP
-
-    # 3. Dynamic Rank Titles (Adjusted for the new XP scale)
-    if xp > 500:
-        rank_title = "Legendary Surgeon"
-    elif xp > 300:
-        rank_title = "Chief Resident"
-    elif xp > 150:
-        rank_title = "Gold Intern"
-    elif xp > 50:
-        rank_title = "Elite Aspirant"
-    else:
-        rank_title = "Medical Student"
-
-    # Perfected Alignment (Standardized divider length)
-    divider = "────────────────────"
-
-    text = (
-        f"🪪 <b>NEETIQ USER PROFILE</b>\n"
-        f"{divider}\n"
-        f"👤 <b>NAME</b> : <code>{html.escape(user.first_name)}</code>\n"
-        f"🏅 <b>STATUS</b> : <code>{rank_title}</code>\n"
-        f"{divider}\n"
-        f"📊 <b>PERFORMANCE DATA:</b>\n"
-        f"<code>╭────────────────────</code>\n"
-        f"<code>│ 🏆 Global Rank : #{global_rank}</code>\n"
-        f"<code>│ 👥 Group Rank  : #{group_rank}</code>\n"
-        f"<code>│ 🧬 Current XP  : {xp:,}</code>\n"
-        f"<code>╰────────────────────</code>\n"
-        f"📈 <b>ACCURACY TRACKER:</b>\n"
-        f"<code>┌── Attempted : {s['attempted']}</code>\n"
-        f"<code>├── Correct   : {s['correct']}</code>\n"
-        f"<code>└── Precision : {accuracy:.1f}%</code>\n"
-        f"{divider}\n"
-        f"🔥 <b>STREAK MONITOR:</b>\n"
-        f"<code>┌── Current   : {s['current_streak']}</code>\n"
-        f"<code>└── Best      : {s['max_streak']}</code>\n"
-        f"{divider}"
-    )
-
-    final_output = apply_footer(text).strip()
-    await update.message.reply_text(final_output, parse_mode=ParseMode.HTML)
 
 
 # ---------------- LEADERBOARD helper ----------------
