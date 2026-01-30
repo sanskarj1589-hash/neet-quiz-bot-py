@@ -1,8 +1,17 @@
-import libsql_client
 import os
-# Replace the 'from config import...' line with this:
+import libsql_client
+from contextlib import contextmanager
+from datetime import datetime
+
+# --- TURSO CONFIGURATION ---
+# This pulls the values directly from Render Environment Variables
 TURSO_URL = os.environ.get("TURSO_URL")
 TURSO_TOKEN = os.environ.get("TURSO_TOKEN")
+
+# This check will prevent the crash and tell you exactly what is missing
+if not TURSO_URL or not TURSO_TOKEN:
+    raise ValueError("❌ DATABASE ERROR: TURSO_URL or TURSO_TOKEN is not set in Render Environment Variables!")
+    
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 from contextlib import contextmanager
