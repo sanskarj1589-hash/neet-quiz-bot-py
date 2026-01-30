@@ -635,8 +635,70 @@ async def delallcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ *Error:* {e}")
 
 
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Broadcasts a message to all users and groups with rate-limiting safety."""
+    if not await is_admin(update.effective_user.id):
+        return
 
+    # Extract message text
+    if not context.args:
+        return await update.message.reply_text(
+            "❌ <b>Usage:</b> <code>/broadcast &lt;message&gt;</code>", 
+            parse_mode="HTML"
+        )
+    
+    msg_text = " ".join(context.args)
+    
+    # Notify admin that the process started
+    status_msg = await update.message.reply_text("⏳ <b>Starting Broadcast...</b>", parse_mode="HTML")
 
+    with db.get_db() as conn:
+        users = conn.execute("SELECT user_id FROM users").fetchall()
+        groups = conn.execute("SELECT chat_id FROM chats").fetchall()
+
+    u_ok, g_ok, u_fail, g_fail = 0, 0, 0, 0
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    announcement_header = f"📢 <b>NEETIQ ANNOUNCEMENT</b>\n{divider}\n\n"
+
+    # 1. Broadcast to Users
+    for u in users:
+        try:
+            await context.bot.send_message(
+                chat_id=u[0], 
+                text=f"{announcement_header}{msg_text}\n\n{divider}",
+                parse_mode="HTML"
+            )
+            u_ok += 1
+            # Telegram Limit: ~30 messages per second. 0.05s delay is safe.
+            await asyncio.sleep(0.05) 
+        except Exception:
+            u_fail += 1
+
+    # 2. Broadcast to Groups
+    for g in groups:
+        try:
+            await context.bot.send_message(
+                chat_id=g[0], 
+                text=f"{announcement_header}{msg_text}\n\n{divider}",
+                parse_mode="HTML"
+            )
+            g_ok += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            g_fail += 1
+
+    # 3. Final Report
+    report = (
+        "✅ <b>BROADCAST COMPLETE</b>\n"
+        f"{divider}\n"
+        f"👤 <b>Users reached:</b> <code>{u_ok}</code>\n"
+        f"👥 <b>Groups reached:</b> <code>{g_ok}</code>\n"
+        f"⚠️ <b>Failed attempts:</b> <code>{u_fail + g_fail}</code>\n"
+        f"{divider}"
+    )
+
+    await status_msg.edit_text(report, parse_mode="HTML")
+			
 
 # ---------------- SETTINGS (FOOTER & AUTOQUIZ) ----------------
 
