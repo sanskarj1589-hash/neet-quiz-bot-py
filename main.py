@@ -377,12 +377,88 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------- LEADERBOARD helper ----------------
+# Helper for visual rank badges
+def get_rank_icon(rank):
+    if rank == 1: return "🥇"
+    if rank == 2: return "🥈"
+    if rank == 3: return "🥉"
+    return f"<code>{rank:02d}.</code>"
 
-def get_badge(rank: int) -> str:
-    """Returns medals for top 3, otherwise formatted hash."""
-    badges = {1: "🥇", 2: "🥈", 3: "🥉"}
-    return badges.get(rank, f"#{rank}")
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Redesigned Global Leaderboard with Podium Styling."""
+    try:
+        # Increase limit to 10 for a standard top list
+        rows = db.get_leaderboard_data(limit=10) 
+        
+        if not rows:
+            return await update.message.reply_text("<b>📭 The Global Arena is currently empty!</b>", parse_mode="HTML")
 
+        divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+        text = (
+            "🏆 <b>NEETIQ GLOBAL WALL OF FAME</b>\n"
+            f"{divider}\n\n"
+        )
+
+        for i, r in enumerate(rows, 1):
+            icon = get_rank_icon(i)
+            # Use html.escape and bold the names of the Top 3
+            name = html.escape(str(r[0]))
+            points = r[3]
+            
+            if i <= 3:
+                text += f"{icon} <b>{name}</b>\n┗━━ {points:,} pts\n\n"
+            else:
+                text += f"{icon} {name} • <code>{points:,}</code>\n"
+
+        text += f"\n{divider}"
+        
+        await update.message.reply_text(
+            apply_footer(text), 
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        print(f"Leaderboard Error: {e}")
+        await update.message.reply_text("❌ <b>Failed to sync Global Rankings.</b>", parse_mode="HTML")
+
+async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Redesigned Group Leaderboard with specialized header."""
+    if update.effective_chat.type == 'private':
+        return await update.message.reply_text("❌ <b>This command only works inside Groups!</b>", parse_mode="HTML")
+
+    try:
+        chat_id = update.effective_chat.id
+        rows = db.get_leaderboard_data(chat_id=chat_id, limit=10)
+        title = html.escape(update.effective_chat.title or "Group")
+        
+        divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+        text = (
+            f"👥 <b>{title.upper()} CHAMPIONS</b>\n"
+            f"{divider}\n\n"
+        )
+
+        if not rows:
+            text += "<i>No participants recorded yet. Start a quiz to claim the first spot!</i>\n"
+        else:
+            for i, r in enumerate(rows, 1):
+                icon = get_rank_icon(i)
+                name = html.escape(str(r[0]))
+                points = r[3]
+                
+                # Compact style for groups to keep chat clutter low
+                text += f"{icon} {name} — <b>{points:,} pts</b>\n"
+
+        text += f"\n{divider}"
+
+        await update.message.reply_text(
+            apply_footer(text), 
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        print(f"Group LB Error: {e}")
+        await update.message.reply_text("❌ <b>Error loading group stats.</b>", parse_mode="HTML")
+		
 
 
 
