@@ -809,7 +809,7 @@ async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
         global_list = "<i>No global data recorded today.</i>\n"
     else:
         for i, r in enumerate(global_rows, 1):
-            badge = get_badge(i)
+            badge = get_rank_icon(i)
             name = html.escape(str(r[0]))
             # Names are NOT bolded here
             global_list += f"{badge} {name} - {r[3]:,} pts\n"
@@ -1093,7 +1093,7 @@ if __name__ == '__main__':
     # Because we set the default tzinfo above, we use a simple time(21, 30)
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=30), 
+        time=time(hour=21, minute=45), 
         name="nightly_leaderboard",
         job_kwargs={
             'misfire_grace_time': 600, # 10 minute grace period
