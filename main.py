@@ -162,25 +162,22 @@ async def send_random_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in Quiz Flow: {e}")
         await update.message.reply_text("❌ Failed to process the quiz. Please check database logs.")
-
-
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes the user's answer and auto-corrects user info in the DB."""
     answer = update.poll_answer
     poll_id = answer.poll_id
-    user = answer.user  # This contains the most recent username/first_name
+    user = answer.user  
     user_id = user.id
 
-    # 1. AUTO-CORRECT: Refresh user info so Leaderboard replaces ID with Name
+    # 1. AUTO-CORRECT: Refresh user info in DB
     with db.get_db() as conn:
         conn.execute("""
-            INSERT INTO users (user_id, username, first_name) 
+            INSERT INTO users (user_id, username, first_name)
             VALUES (?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET 
-                username = excluded.username, 
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
                 first_name = excluded.first_name
         """, (user_id, user.username, user.first_name))
-        conn.commit()
 
     # 2. Retrieve Poll Data
     with db.get_db() as conn:
@@ -202,14 +199,14 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         first_name=user.first_name
     )
 
-    # 4. Compliment System (Existing logic)
+    # 4. Compliment System
     with db.get_db() as conn:
         setting = conn.execute("SELECT compliments_enabled FROM group_settings WHERE chat_id = ?", (chat_id,)).fetchone()
         if setting and setting[0] == 0:
             return
 
     c_type = "correct" if is_correct else "wrong"
-    
+
     with db.get_db() as conn:
         comp = conn.execute(
             "SELECT text FROM group_compliments WHERE chat_id = ? AND type = ? ORDER BY RANDOM() LIMIT 1",
@@ -224,16 +221,30 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if comp:
         compliment_text = comp[0]
-        mention_name = f"@{user.username}" if user.username else f"*{user.first_name}*"
+        
+        # --- SAFE HTML MENTION LOGIC ---
+        safe_name = html.escape(user.first_name)
+        if user.username:
+            # Simple @mention for users with usernames
+            mention_name = f"@{html.escape(user.username)}"
+        else:
+            # Clickable mention for users without usernames
+            mention_name = f'<a href="tg://user?id={user_id}">{safe_name}</a>'
+            
         final_text = compliment_text.replace("{user}", mention_name)
 
         if chat_id < 0:
             try:
-                await context.bot.send_message(chat_id=chat_id, text=final_text, parse_mode="Markdown")
+                await context.bot.send_message(
+                    chat_id=chat_id, 
+                    text=final_text, 
+                    parse_mode=ParseMode.HTML, # Changed from Markdown
+                    disable_web_page_preview=True
+                )
             except Exception as e:
                 logger.error(f"Error sending compliment: {e}")
-
-
+	
+    
 # ---------------- PERFORMANCE STATS ----------------
 
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
