@@ -296,7 +296,84 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(apply_footer(text))
 
 
+async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    chat_id = chat.id
 
+    with db.get_db() as conn:
+        # Fetching stats; using indices for broad compatibility
+        s = conn.execute("SELECT user_id, attempted, correct, score, current_streak, max_streak FROM stats WHERE user_id = ?", (user.id,)).fetchone()
+        
+        if not s:
+            return await update.message.reply_text("❌ <b>No statistics found!</b>\nAnswer some quizzes to generate your profile.", parse_mode="HTML")
+
+        # Column mapping for clarity based on your query
+        # (user_id:0, attempted:1, correct:2, score:3, current_streak:4, max_streak:5)
+        attempted = s[1]
+        correct = s[2]
+        score = s[3]
+        c_streak = s[4]
+        m_streak = s[5]
+
+        # Calculate Global Rank
+        g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (score,)).fetchone()
+        global_rank = g_rank_row[0]
+
+        # Calculate Group Rank (only if in a group)
+        group_rank = "N/A"
+        if chat.type != 'private':
+            # Note: This assumes you have a 'group_stats' table or column sync
+            gr_row = conn.execute("SELECT COUNT(*) + 1 FROM group_stats WHERE chat_id = ? AND score > ?",
+                                 (chat_id, score)).fetchone()
+            group_rank = gr_row[0] if gr_row else "N/A"
+
+    # 1. Performance Logic (NEET Scoring: +4, -1)
+    accuracy = (correct / attempted * 100) if attempted > 0 else 0
+    wrong = attempted - correct
+    xp = (correct * 4) - (wrong * 1)
+    xp = max(0, xp)  # XP cannot be negative
+
+    # 2. Dynamic Rank Titles (Visual Redesign)
+    if xp > 1000: rank_title = "🏥 AIIMS Dean"
+    elif xp > 500: rank_title = "👨‍⚕️ Senior Consultant"
+    elif xp > 300: rank_title = "💉 Resident Doctor"
+    elif xp > 150: rank_title = "🩺 Gold Intern"
+    elif xp > 50:  rank_title = "📚 Elite Aspirant"
+    else:          rank_title = "🧬 Medical Student"
+
+    # 3. HTML Profile Construction
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    safe_name = html.escape(user.first_name)
+
+    text = (
+        f"🪪 <b>NEETIQ USER PROFILE</b>\n"
+        f"{divider}\n"
+        f"👤 <b>NAME</b> : <code>{safe_name}</code>\n"
+        f"🏅 <b>RANK</b> : <b>{rank_title}</b>\n"
+        f"{divider}\n"
+        f"📊 <b>POSITION DATA</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 🏆 Global  : #{global_rank}</code>\n"
+        f"<code>│ 👥 Group   : #{group_rank}</code>\n"
+        f"<code>│ 🧬 Total XP: {xp:,}</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"📈 <b>ACCURACY TRACKER</b>\n"
+        f"<code>┌── Attempted : {attempted}</code>\n"
+        f"<code>├── Correct   : {correct}</code>\n"
+        f"<code>└── Precision : {accuracy:.1f}%</code>\n\n"
+        f"🔥 <b>STREAK MONITOR</b>\n"
+        f"<code>┌── Current   : {c_streak}</code>\n"
+        f"<code>└── Best      : {m_streak}</code>\n"
+        f"{divider}"
+    )
+
+    await update.message.reply_text(
+        apply_footer(text), 
+        parse_mode="HTML",
+        disable_web_page_preview=True
+	)
+	
 
 
 # ---------------- LEADERBOARD helper ----------------
@@ -306,47 +383,6 @@ def get_badge(rank: int) -> str:
     badges = {1: "🥇", 2: "🥈", 3: "🥉"}
     return badges.get(rank, f"#{rank}")
 
-# ---------------- LEADERBOARD FUNCTIONS ----------------
-
-async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        rows = db.get_leaderboard_data(limit=10)
-        if not rows:
-            return await update.message.reply_text("📭 Leaderboard is empty.")
-
-        text = "<b>🌍 Global Top 10 Performers</b>\n"
-        text += "━━━━━━━━━━━━━━━━━━\n\n"
-
-        for i, r in enumerate(rows, 1):
-            rank_display = get_badge(i)
-            name = html.escape(str(r[0]))
-            # Using r[3] for the points as per your original logic
-            text += f"{rank_display} {name} -  {r[3]} pts!\n"
-
-        await update.message.reply_text(apply_footer(text), parse_mode=ParseMode.HTML)
-    except Exception as e:
-        await update.message.reply_text("❌ Error generating leaderboard.")
-
-async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        chat_id = update.effective_chat.id
-        rows = db.get_leaderboard_data(chat_id=chat_id, limit=10)
-        title = html.escape(update.effective_chat.title)
-        
-        text = f"<b>👥 {title.upper()} Top 10</b>\n"
-        text += "━━━━━━━━━━━━━━━━━━\n\n"
-
-        if not rows:
-            return await update.message.reply_text("📭 No participants yet.")
-
-        for i, r in enumerate(rows, 1):
-            rank_display = get_badge(i)
-            name = html.escape(str(r[0]))
-            text += f"{rank_display} {name} - {r[3]} pts!\n"
-
-        await update.message.reply_text(apply_footer(text), parse_mode=ParseMode.HTML)
-    except Exception as e:
-        await update.message.reply_text("❌ Error loading group leaderboard.")
 
 
 
