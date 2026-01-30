@@ -69,51 +69,6 @@ async def is_admin(user_id: int) -> bool:
         res = conn.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,)).fetchone()
         return res is not None
 
-# ---------------- REGISTRATION ----------------
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat = update.effective_chat
-    
-    with db.get_db() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
-            (user.id, user.username, user.first_name, str(datetime.now()))
-        )
-        if chat.type != 'private':
-            conn.execute(
-                "INSERT OR IGNORE INTO chats (chat_id, type, title, added_at) VALUES (?,?,?,?)",
-                (chat.id, chat.type, chat.title, str(datetime.now()))
-            )
-
-    if chat.type == 'private':
-        welcome = (
-            f"👋 *Welcome to NEETIQBot, {user.first_name}!*\n\n"
-            "I am your dedicated NEET preparation assistant. "
-            "I provide high-quality MCQs, track your streaks, and manage competitive leaderboards.\n\n"
-            "📌 *Use* /help *to see all available commands.*"
-        )
-        btn = [[InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{context.bot.username}?startgroup=true")]]
-        await update.message.reply_text(apply_footer(welcome), reply_markup=InlineKeyboardMarkup(btn))
-    else:
-        group_msg = f"🎉 *Group successfully registered with NEETIQBot!*\n\nPreparing {chat.title} for upcoming quizzes."
-        await update.message.reply_text(apply_footer(group_msg))
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "📖 *NEETIQBot Command List*\n\n"
-        "👋 *Basic Commands*\n"
-        "/start - Register and start the bot\n"
-        "/help - Display this help manual\n\n"
-        "📘 *Quiz System*\n"
-        "/randomquiz - Receive a random NEET MCQ\n"
-        "/myscore - View your point summary\n"
-        "/mystats - Detailed performance analysis\n\n"
-        "🏆 *Leaderboards*\n"
-        "/leaderboard - Global rankings (Top 25)\n"
-        "/groupleaderboard - Group specific rankings"
-    )
-    await update.message.reply_text(apply_footer(help_text))
 
 # ---------------- QUIZ SYSTEM ----------------
 
