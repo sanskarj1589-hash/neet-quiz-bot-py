@@ -1026,12 +1026,15 @@ if __name__ == '__main__':
     print("🌐 Starting Keep-Alive server...")
     keep_alive()
 
-    # 3. Build Application using Environment Variables
-    # Set BOT_TOKEN in Render Environment Variables
+    # 3. Define Timezone for Kolkata
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+
+    # 4. Build Application using Environment Variables
+    # We add the timezone to 'defaults' so all scheduled jobs use IST
     application = (
         ApplicationBuilder()
         .token(os.environ.get("BOT_TOKEN")) 
-        .defaults(Defaults(parse_mode=ParseMode.HTML)) # Using HTML is safer
+        .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
         .build()
     )
 
@@ -1086,20 +1089,18 @@ if __name__ == '__main__':
 
     jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
 
-    # Nightly Leaderboard with Grace Time
-    ist_timezone = pytz.timezone('Asia/Kolkata')
+    # Nightly Leaderboard scheduled for 9:30 PM (21:30) IST
+    # Because we set the default tzinfo above, we use a simple time(21, 30)
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=15, tzinfo=ist_timezone),
+        time=time(hour=21, minute=30), 
         name="nightly_leaderboard",
         job_kwargs={
             'misfire_grace_time': 600, # 10 minute grace period
-            'coalesce': True           # Avoid double-running
+            'coalesce': True           
         }
     )
 
     print("🚀 NEETIQBot is fully secured and Online!")
     application.run_polling(drop_pending_updates=True)
 	
-
-
