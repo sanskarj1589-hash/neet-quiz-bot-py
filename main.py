@@ -1090,7 +1090,7 @@ if __name__ == '__main__':
     ist_timezone = pytz.timezone('Asia/Kolkata')
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=1, tzinfo=ist_timezone),
+        time=time(hour=21, minute=15, tzinfo=ist_timezone),
         name="nightly_leaderboard",
         job_kwargs={
             'misfire_grace_time': 600, # 10 minute grace period
