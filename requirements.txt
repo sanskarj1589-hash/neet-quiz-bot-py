@@ -1,4 +1,4 @@
-python-telegram-bot[job-queue]==21.10
+python-telegram-bot --upgrade
+libsql-client
 pytz
-pymongo
-dnspython
+httpx
