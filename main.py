@@ -164,7 +164,7 @@ async def send_random_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             options=options,
             type=Poll.QUIZ,
             correct_option_id=c_idx,
-            explanation=f"📖 *Explanation:*\n{q['explanation']}",
+            explanation=f"📖 Explanation:\n{q['explanation']}",
             is_anonymous=False
         )
         
@@ -180,7 +180,92 @@ async def send_random_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in Quiz Flow: {e}")
         await update.message.reply_text("❌ Failed to process the quiz. Please check database logs.")
 
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes answer and sends compliments using stable database queries."""
+    answer = update.poll_answer
+    poll_id = answer.poll_id
+    user = answer.user  
+    
+    if not user:
+        return
+        
+    user_id = user.id
+    username = user.username
+    first_name = user.first_name
 
+    # 1. Sync User and Fetch Poll Data
+    with db.get_db() as conn:
+        conn.execute("""
+            INSERT INTO users (user_id, username, first_name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name
+        """, (user_id, username, first_name))
+        
+        poll_data = conn.execute(
+            "SELECT chat_id, correct_option_id FROM active_polls WHERE poll_id = ?", 
+            (poll_id,)
+        ).fetchone()
+
+    if not poll_data:
+        return
+
+    chat_id = poll_data[0]
+    correct_option = poll_data[1]
+    is_correct = (len(answer.option_ids) > 0 and answer.option_ids[0] == correct_option)
+
+    # 2. Update Stats
+    db.update_user_stats(user_id, chat_id, is_correct, username=username, first_name=first_name)
+
+    # 3. Stable Compliment Logic
+    with db.get_db() as conn:
+        # Check if enabled
+        setting = conn.execute(
+            "SELECT compliments_enabled FROM group_settings WHERE chat_id = ?", 
+            (chat_id,)
+        ).fetchone()
+        if setting and setting[0] == 0:
+            return
+
+        c_type = "correct" if is_correct else "wrong"
+
+        # Split query for Turso stability: Try group first, then global
+        comp = conn.execute(
+            "SELECT text FROM group_compliments WHERE chat_id = ? AND type = ? ORDER BY RANDOM() LIMIT 1",
+            (chat_id, c_type)
+        ).fetchone()
+
+        if not comp:
+            comp = conn.execute(
+                "SELECT text FROM compliments WHERE type = ? ORDER BY RANDOM() LIMIT 1",
+                (c_type,)
+            ).fetchone()
+
+    if comp:
+        compliment_text = comp[0]
+        safe_name = html.escape(first_name)
+        
+        # Format mention
+        if username:
+            mention_name = f"<b>@{html.escape(username)}</b>"
+        else:
+            mention_name = f'<b><a href="tg://user?id={user_id}">{safe_name}</a></b>'
+            
+        final_text = compliment_text.replace("{user}", mention_name)
+
+        # Only broadcast in groups
+        if chat_id < 0:
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id, 
+                    text=final_text, 
+                    parse_mode="HTML",
+                    disable_web_page_preview=True
+                )
+            except Exception as e:
+                print(f"Error sending compliment: {e}")
+				
 # ---------------- PERFORMANCE STATS ----------------
 
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -289,6 +374,45 @@ def get_rank_icon(rank):
     if rank == 2: return "🥈"
     if rank == 3: return "🥉"
     return f"<code>{rank:02d}.</code>"
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Redesigned Global Leaderboard with Podium Styling."""
+    try:
+        # Fetch top 10 rows
+        rows = db.get_leaderboard_data(limit=10) 
+        
+        if not rows:
+            return await update.message.reply_text("<b>📭 The Global Arena is currently empty!</b>", parse_mode="HTML")
+
+        divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+        text = (
+            "🏆 <b>NEETIQ GLOBAL CHAMPIONS</b>\n" # Fixed the closing tag typo here
+            f"{divider}\n\n"
+        )
+
+        for i, r in enumerate(rows, 1):
+            icon = get_rank_icon(i)
+            name = html.escape(str(r[0]))
+            points = r[3]
+            
+            if i <= 3:
+                # Fancy Podium for Top 3
+                text += f"{icon} <b>{name}</b>\n┗━━ {points:,} pts\n\n"
+            else:
+                # Clean list for the rest
+                text += f"{icon} {name} • <code>{points:,}</code>\n"
+
+        text += f"\n{divider}"
+        
+        await update.message.reply_text(
+            apply_footer(text), 
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        print(f"Leaderboard Error: {e}")
+        await update.message.reply_text("❌ <b>Failed to sync Global Rankings.</b>", parse_mode="HTML")
+		
 
 
 async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
