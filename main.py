@@ -376,7 +376,7 @@ def get_rank_icon(rank):
     return f"<code>{rank:02d}.</code>"
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Redesigned Global Leaderboard with Podium Styling."""
+    """Redesigned Global Leaderboard: Uniform format for all ranks."""
     try:
         # Fetch top 10 rows
         rows = db.get_leaderboard_data(limit=10) 
@@ -386,21 +386,17 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
         text = (
-            "🏆 <b>NEETIQ GLOBAL CHAMPIONS</b>\n" # Fixed the closing tag typo here
+            "🏆 <b>NEETIQ GLOBAL CHAMPIONS</b>\n"
             f"{divider}\n\n"
         )
 
         for i, r in enumerate(rows, 1):
-            icon = get_rank_icon(i)
+            icon = get_rank_icon(i) # e.g., 🥇, 🥈, 🥉, or 04.
             name = html.escape(str(r[0]))
             points = r[3]
             
-            if i <= 3:
-                # Fancy Podium for Top 3
-                text += f"{icon} <b>{name}</b>\n┗━━ {points:,} pts\n\n"
-            else:
-                # Clean list for the rest
-                text += f"{icon} {name} • <code>{points:,}</code>\n"
+            # Consistent format: User - x pts!
+            text += f"{icon} {name} - {points:,} pts!\n"
 
         text += f"\n{divider}"
         
@@ -412,8 +408,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Leaderboard Error: {e}")
         await update.message.reply_text("❌ <b>Failed to sync Global Rankings.</b>", parse_mode="HTML")
-		
-
+			
 
 async def groupleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Redesigned Group Leaderboard with specialized header."""
