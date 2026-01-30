@@ -2,3 +2,5 @@ python-telegram-bot[job-queue]
 libsql-client
 pytz
 httpx
+flask
+gunicorn
