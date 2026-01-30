@@ -799,66 +799,6 @@ async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
         conn.execute("DELETE FROM questions WHERE id = ?", (q[0],))
 
 
-async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
-    """Sends a daily summary with plain-text names and bold headers."""
-    
-    # 1. Generate Global List (Plain Text)
-    global_rows = db.get_leaderboard_data(limit=10)
-    global_list = ""
-    if not global_rows:
-        global_list = "<i>No global data recorded today.</i>\n"
-    else:
-        for i, r in enumerate(global_rows, 1):
-            badge = get_rank_icon(i)
-            name = html.escape(str(r[0]))
-            # Names are NOT bolded here
-            global_list += f"{badge} {name} - {r[3]:,} pts\n"
-
-    # 2. Get Group List
-    with db.get_db() as conn:
-        chats = conn.execute("SELECT chat_id, title FROM chats WHERE type != 'private'").fetchall()
-
-    # 3. Process each group
-    for c in chats:
-        chat_id, raw_title = c[0], (c[1] if c[1] else "This Group")
-        safe_title = html.escape(raw_title)
-        
-        try:
-            group_rows = db.get_leaderboard_data(chat_id=chat_id, limit=10)
-            group_list = ""
-
-            if not group_rows:
-                group_list = "<i>No participants in this group yet.</i>\n"
-            else:
-                for i, r in enumerate(group_rows, 1):
-                    badge = get_badge(i)
-                    name = html.escape(str(r[0]))
-                    # Names are NOT bolded here
-                    group_list += f"{badge} {name} - {r[3]:,} pts\n"
-
-            divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
-            final_message = (
-                "🌙 <b>DAILY LEADERBOARD</b>\n"
-                f"{divider}\n"
-                "🌍 <b>Global Top 10</b>\n"
-                f"{global_list}"
-                f"{divider}\n"
-                f"👥 <b>{safe_title.upper()} Top 10</b>\n"
-                f"{group_list}"
-                f"{divider}\n"
-                "Great effort today, champs! 🚀\nKeep the momentum going!"
-            )
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=apply_footer(final_message),
-                parse_mode="HTML"
-            )
-            await asyncio.sleep(0.5)
-        except Exception:
-            continue
-			
-
 async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Provides a high-level overview of the bot's reach and data."""
     if not await is_admin(update.effective_user.id): return
