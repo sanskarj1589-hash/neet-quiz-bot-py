@@ -18,26 +18,6 @@ from telegram.ext import (
 )
 import database as db
 
-from threading import Thread
-from flask import Flask
-
-app_flask = Flask('')
-
-@app_flask.route('/')
-def home():
-    return "I am alive!"
-
-def run():
-    # Render provides the PORT environment variable automatically
-    port = int(os.environ.get("PORT", 8080))
-    app_flask.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-	
-
-
 
 # ---------------- CONFIG ----------------
 # Replace with your actual Bot Token
@@ -895,6 +875,110 @@ async def mirror_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await context.bot.send_message(chat_id=SOURCE_GROUP_ID, text=summary)
 
+import os
+from threading import Thread
+from flask import Flask
 
+# --- KEEP-ALIVE SERVER FOR RENDER ---
+flask_app = Flask('')
+
+@flask_app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    # Render provides PORT environment variable automatically
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
+# --- MAIN EXECUTION ---
+if __name__ == '__main__':
+    # 1. Initialize Database
+    db.init_db()
+    
+    # 2. Start the Keep-Alive Web Server
+    print("🌐 Starting Keep-Alive server...")
+    keep_alive()
+
+    # 3. Build Application using Environment Variables
+    # Set BOT_TOKEN in Render Environment Variables
+    application = (
+        ApplicationBuilder()
+        .token(os.environ.get("BOT_TOKEN")) 
+        .defaults(Defaults(parse_mode=ParseMode.HTML)) # Using HTML is safer
+        .build()
+    )
+
+    # --- HANDLERS ---
+    # Mirroring (Place first)
+    application.add_handler(MessageHandler(
+        filters.Chat(SOURCE_GROUP_ID) & 
+        (~filters.COMMAND) & 
+        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
+        mirror_messages
+    ))
+
+    # Commands
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("randomquiz", send_random_quiz))
+    application.add_handler(CommandHandler("myscore", myscore))
+    application.add_handler(CommandHandler("mystats", mystats))
+    application.add_handler(CommandHandler("leaderboard", leaderboard))
+    application.add_handler(CommandHandler("botstats", bot_stats))
+    application.add_handler(CommandHandler("setcomp", set_group_compliment))
+    application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
+    application.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
+    application.add_handler(CommandHandler("addadmin", add_admin))
+    application.add_handler(CommandHandler("removeadmin", remove_admin))
+    application.add_handler(CommandHandler("adminlist", adminlist))
+    application.add_handler(CommandHandler("addquestion", addquestion))
+    application.add_handler(CommandHandler("questions", questions_stats))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("addcompliment", addcompliment))
+    application.add_handler(CommandHandler("listcompliments", listcompliments))
+    application.add_handler(CommandHandler("delcompliment", delcompliment))
+    application.add_handler(CommandHandler("footer", footer_cmd))
+    application.add_handler(CommandHandler("autoquiz", autoquiz))
+    application.add_handler(CommandHandler("delallquestions", del_all_questions))
+    application.add_handler(CommandHandler("delallcompliments", delallcompliments))
+
+    # Special Handlers
+    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
+    application.add_handler(PollAnswerHandler(handle_poll_answer))
+
+    # --- JOB QUEUE SETUP ---
+    jq = application.job_queue
+
+    # Auto-quiz interval
+    try:
+        with db.get_db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
+            interval_min = int(row[0]) if row else 30
+    except Exception:
+        interval_min = 30 
+
+    jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
+
+    # Nightly Leaderboard with Grace Time
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    jq.run_daily(
+        nightly_leaderboard_job,
+        time=time(hour=21, minute=1, tzinfo=ist_timezone),
+        name="nightly_leaderboard",
+        job_kwargs={
+            'misfire_grace_time': 600, # 10 minute grace period
+            'coalesce': True           # Avoid double-running
+        }
+    )
+
+    print("🚀 NEETIQBot is fully secured and Online!")
+    application.run_polling(drop_pending_updates=True)
+	
 
 
