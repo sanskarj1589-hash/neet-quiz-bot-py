@@ -755,6 +755,120 @@ async def autoquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 await update.message.reply_text("❌ Please provide a valid number for minutes.")
 
+async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
+    """Picks ONE question and sends it to ALL groups simultaneously with HTML formatting."""
+    with db.get_db() as conn:
+        # 1. Check if auto-quiz is enabled
+        setting = conn.execute("SELECT value FROM settings WHERE key='autoquiz_enabled'").fetchone()
+        if not setting or setting[0] == '0': 
+            return
+        
+        # 2. Pick a random question
+        # Fetching by index to ensure compatibility: id:0, question:1, a:2, b:3, c:4, d:5, correct:6, explanation:7
+        q = conn.execute("SELECT id, question, a, b, c, d, correct, explanation FROM questions ORDER BY RANDOM() LIMIT 1").fetchone()
+        
+        if not q:
+            return 
+
+        # 3. Get all active groups
+        chats = conn.execute("SELECT chat_id FROM chats WHERE type != 'private'").fetchall()
+
+    # Prep Poll Data
+    options = [str(q[2]), str(q[3]), str(q[4]), str(q[5])]
+    correct_map = {'1': 0, '2': 1, '3': 2, '4': 3, 'A': 0, 'B': 1, 'C': 2, 'D': 3}
+    c_idx = correct_map.get(str(q[6]).upper(), 0)
+
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    question_text = f"🧠 <b>NEET MCQ (Global Quiz)</b>\n{divider}\n\n{q[1]}"
+    explanation_text = f"📖 <b>Explanation:</b>\n{q[7]}"
+
+    # Send to all groups
+    for c in chats:
+        try:
+            msg = await context.bot.send_poll(
+                chat_id=c[0],
+                question=question_text,
+                options=options,
+                type=Poll.QUIZ,
+                correct_option_id=c_idx,
+                explanation=explanation_text,
+                explanation_parse_mode=ParseMode.HTML,
+                is_anonymous=False
+            )
+            
+            # Register active poll for scoring
+            with db.get_db() as conn:
+                conn.execute("INSERT INTO active_polls (poll_id, chat_id, correct_option_id) VALUES (?,?,?)", 
+                             (msg.poll.id, c[0], c_idx))
+            
+            await asyncio.sleep(0.2) 
+        except Exception:
+            continue
+
+    # 4. Remove question from pool after successful broadcast
+    with db.get_db() as conn:
+        conn.execute("DELETE FROM questions WHERE id = ?", (q[0],))
+
+
+async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
+    """Sends a daily summary with plain-text names and bold headers."""
+    
+    # 1. Generate Global List (Plain Text)
+    global_rows = db.get_leaderboard_data(limit=10)
+    global_list = ""
+    if not global_rows:
+        global_list = "<i>No global data recorded today.</i>\n"
+    else:
+        for i, r in enumerate(global_rows, 1):
+            badge = get_badge(i)
+            name = html.escape(str(r[0]))
+            # Names are NOT bolded here
+            global_list += f"{badge} {name} - {r[3]:,} pts\n"
+
+    # 2. Get Group List
+    with db.get_db() as conn:
+        chats = conn.execute("SELECT chat_id, title FROM chats WHERE type != 'private'").fetchall()
+
+    # 3. Process each group
+    for c in chats:
+        chat_id, raw_title = c[0], (c[1] if c[1] else "This Group")
+        safe_title = html.escape(raw_title)
+        
+        try:
+            group_rows = db.get_leaderboard_data(chat_id=chat_id, limit=10)
+            group_list = ""
+
+            if not group_rows:
+                group_list = "<i>No participants in this group yet.</i>\n"
+            else:
+                for i, r in enumerate(group_rows, 1):
+                    badge = get_badge(i)
+                    name = html.escape(str(r[0]))
+                    # Names are NOT bolded here
+                    group_list += f"{badge} {name} - {r[3]:,} pts\n"
+
+            divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+            final_message = (
+                "🌙 <b>DAILY LEADERBOARD</b>\n"
+                f"{divider}\n"
+                "🌍 <b>Global Top 10</b>\n"
+                f"{global_list}"
+                f"{divider}\n"
+                f"👥 <b>{safe_title.upper()} Top 10</b>\n"
+                f"{group_list}"
+                f"{divider}\n"
+                "Great effort today, champs! 🚀\nKeep the momentum going!"
+            )
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=apply_footer(final_message),
+                parse_mode="HTML"
+            )
+            await asyncio.sleep(0.5)
+        except Exception:
+            continue
+			
 
 async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Provides a high-level overview of the bot's reach and data."""
