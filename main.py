@@ -832,7 +832,93 @@ async def footer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.execute("UPDATE settings SET value=? WHERE key='footer_text'", (new_text,))
             await update.message.reply_text(f"✅ *Footer text updated to:* `{new_text}`")
 
+async def autoquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manages the automatic quiz scheduler with Async Support."""
+    if not await is_admin(update.effective_user.id): return
+    args = context.args
+    
+    if not args:
+        return await update.message.reply_text(
+            "⚙️ <b>AutoQuiz Settings Help:</b>\n"
+            "• <code>/autoquiz on</code> - Start automatic quizzes\n"
+            "• <code>/autoquiz off</code> - Stop automatic quizzes\n"
+            "• <code>/autoquiz interval &lt;min&gt;</code> - Set time interval (minutes)",
+            parse_mode=ParseMode.HTML
+        )
 
+    # Use 'async with' instead of 'with'
+    async with db.get_db() as conn:
+        action = args[0].lower()
+        if action == 'on':
+            await conn.execute("UPDATE settings SET value='on' WHERE key='auto_quiz'")
+            await update.message.reply_text("✅ <b>Auto Quiz mode is now ON.</b>")
+        elif action == 'off':
+            await conn.execute("UPDATE settings SET value='off' WHERE key='auto_quiz'")
+            await update.message.reply_text("❌ <b>Auto Quiz mode is now OFF.</b>")
+        elif action == 'interval' and len(args) > 1:
+            try:
+                minutes = int(args[1])
+                if minutes < 1: raise ValueError
+                await conn.execute("UPDATE settings SET value=? WHERE key='autoquiz_interval'", (str(minutes),))
+                await update.message.reply_text(f"✅ <b>Quiz interval set to {minutes} minutes.</b>")
+            except ValueError:
+                await update.message.reply_text("❌ Please provide a valid positive number for minutes.")
+
+
+
+async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
+    """Picks ONE question and sends it to ALL groups simultaneously (Fully Async)."""
+    async with db.get_db() as conn:
+        # 1. Check if auto-quiz is enabled (AWAIT the execution)
+        res = await conn.execute("SELECT value FROM settings WHERE key='auto_quiz'")
+        setting = res.fetchone()
+        if not setting or setting['value'] != 'on': 
+            return
+        
+        # 2. Pick a random question
+        res = await conn.execute("SELECT id, question, subject, correct_option_id FROM questions ORDER BY RANDOM() LIMIT 1")
+        q = res.fetchone()
+        
+        if not q:
+            return 
+
+        # 3. Get all active groups
+        res = await conn.execute("SELECT chat_id FROM chats WHERE status = 'active'")
+        chats = res.fetchall()
+
+    # Prep Poll Data (Using your specific database structure)
+    # Note: If your 'questions' table stores options in a different table, adjust here.
+    # Assuming options are stored as a list or fixed strings:
+    options = ["Option 1", "Option 2", "Option 3", "Option 4"] # Replace with actual logic if needed
+    c_idx = q['correct_option_id']
+
+    divider = "<b>━━━━━━━━━━━━━━━━━</b>"
+    question_text = f"🧠 <b>NEET MCQ ({q['subject']})</b>\n{divider}\n\n{q['question']}"
+
+    # Send to all groups
+    for c in chats:
+        try:
+            msg = await context.bot.send_poll(
+                chat_id=c['chat_id'],
+                question=question_text,
+                options=options,
+                type=Poll.QUIZ,
+                correct_option_id=c_idx,
+                is_anonymous=False
+            )
+            
+            # Register active poll for scoring (AWAIT the execution)
+            async with db.get_db() as conn:
+                await conn.execute(
+                    "INSERT INTO active_polls (poll_id, chat_id, correct_option_id) VALUES (?,?,?)", 
+                    (msg.poll.id, c['chat_id'], c_idx)
+                )
+            
+            await asyncio.sleep(0.5) # Prevent flood limits
+        except Exception as e:
+            print(f"Error sending auto-quiz to {c['chat_id']}: {e}")
+            continue
+				
 async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
     """Sends a daily summary with plain-text names and bold headers."""
     
