@@ -58,6 +58,59 @@ def get_db():
     finally:
         client.close()
 
+def init_db():
+    """Initializes tables on Turso Cloud with Subject Tracking."""
+    with get_db() as conn:
+        # Questions Bank - Added 'subject' column
+        conn.execute("""CREATE TABLE IF NOT EXISTS questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question TEXT, a TEXT, b TEXT, c TEXT, d TEXT, 
+            correct TEXT, explanation TEXT,
+            subject TEXT DEFAULT 'General')""")
+
+        # User & Group Registration
+        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY, 
+            username TEXT, first_name TEXT, joined_at TEXT)""")
+
+        conn.execute("""CREATE TABLE IF NOT EXISTS chats (
+            chat_id INTEGER PRIMARY KEY, type TEXT, title TEXT, added_at TEXT)""")
+
+        conn.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, added_at TEXT)")
+
+        # Stats & Scoring - Added subject-specific tracking columns
+        conn.execute("""CREATE TABLE IF NOT EXISTS stats (
+            user_id INTEGER PRIMARY KEY, 
+            attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, score INTEGER DEFAULT 0,
+            bio_att INTEGER DEFAULT 0, bio_cor INTEGER DEFAULT 0,
+            phy_att INTEGER DEFAULT 0, phy_cor INTEGER DEFAULT 0,
+            che_att INTEGER DEFAULT 0, che_cor INTEGER DEFAULT 0,
+            current_streak INTEGER DEFAULT 0, max_streak INTEGER DEFAULT 0, last_date TEXT)""")
+
+        # Group Stats - Added subject-specific tracking columns
+        conn.execute("""CREATE TABLE IF NOT EXISTS group_stats (
+            chat_id INTEGER, user_id INTEGER, score INTEGER DEFAULT 0, 
+            attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0,
+            bio_att INTEGER DEFAULT 0, bio_cor INTEGER DEFAULT 0,
+            phy_att INTEGER DEFAULT 0, phy_cor INTEGER DEFAULT 0,
+            che_att INTEGER DEFAULT 0, che_cor INTEGER DEFAULT 0,
+            PRIMARY KEY(chat_id, user_id))""")
+
+        # Customization & Settings
+        conn.execute("CREATE TABLE IF NOT EXISTS compliments (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, text TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        
+        defaults = [
+            ('footer_text', 'NEETIQBot'),
+            ('footer_enabled', '1'),
+            ('autoquiz_enabled', '0'),
+            ('autoquiz_interval', '30'),
+            ('compliments_enabled', '1')
+        ]
+        conn.executemany("INSERT OR IGNORE INTO settings VALUES (?,?)", defaults)
+        
+    print("✅ Turso Cloud Database Initialized with Subject Support!")
+        
 
 def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
     with get_db() as conn:
