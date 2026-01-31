@@ -1282,7 +1282,7 @@ if __name__ == '__main__':
     # Because we set the default tzinfo above, we use a simple time(21, 30)
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=22, minute=0), 
+        time=time(hour=21, minute=0), 
         name="nightly_leaderboard",
         job_kwargs={
             'misfire_grace_time': 600, # 10 minute grace period
