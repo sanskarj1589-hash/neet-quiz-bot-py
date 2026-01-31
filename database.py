@@ -111,9 +111,10 @@ def init_db():
         
     print("✅ Turso Cloud Database Initialized with Subject Support!")
         
-
-def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
+def update_user_stats(user_id, chat_id, is_correct, subject=None, username=None, first_name=None):
+    """Updates global and group stats with subject-specific tracking."""
     with get_db() as conn:
+        # 1. Update/Ensure User Info
         conn.execute("""
             INSERT INTO users (user_id, username, first_name) 
             VALUES (?, ?, ?)
@@ -123,25 +124,56 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
 
         score_change = 4 if is_correct else -1
         correct_inc = 1 if is_correct else 0
+        
+        # Determine subject column prefix
+        subj = str(subject).lower() if subject else ""
+        s_prefix = "bio" if "bio" in subj else "phy" if "phy" in subj else "che" if "che" in subj else None
 
-        conn.execute("""
-            INSERT INTO stats (user_id, attempted, correct, score) 
-            VALUES (?, 1, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET 
-                attempted = attempted + 1,
-                correct = correct + ?,
-                score = score + ?
-        """, (user_id, correct_inc, score_change, correct_inc, score_change))
-
-        if chat_id:
+        # 2. Update Global Stats
+        if s_prefix:
+            # Dynamic SQL to update bio_att/bio_cor, phy_att/phy_cor, etc.
+            sql = f"""
+                INSERT INTO stats (user_id, attempted, correct, score, {s_prefix}_att, {s_prefix}_cor) 
+                VALUES (?, 1, ?, ?, 1, ?)
+                ON CONFLICT(user_id) DO UPDATE SET 
+                    attempted = attempted + 1, 
+                    correct = correct + ?, 
+                    score = score + ?,
+                    {s_prefix}_att = {s_prefix}_att + 1, 
+                    {s_prefix}_cor = {s_prefix}_cor + ?
+            """
+            conn.execute(sql, (user_id, correct_inc, score_change, correct_inc, correct_inc, score_change, correct_inc))
+        else:
+            # Standard update if no subject is detected
             conn.execute("""
-                INSERT INTO group_stats (user_id, chat_id, attempted, correct, score) 
-                VALUES (?, ?, 1, ?, ?)
-                ON CONFLICT(user_id, chat_id) DO UPDATE SET 
-                    attempted = attempted + 1,
-                    correct = correct + ?,
-                    score = score + ?
-            """, (user_id, chat_id, correct_inc, score_change, correct_inc, score_change))
+                INSERT INTO stats (user_id, attempted, correct, score) 
+                VALUES (?, 1, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET 
+                    attempted = attempted + 1, correct = correct + ?, score = score + ?
+            """, (user_id, correct_inc, score_change, correct_inc, score_change))
+
+        # 3. Update Group Stats
+        if chat_id:
+            if s_prefix:
+                sql_grp = f"""
+                    INSERT INTO group_stats (user_id, chat_id, attempted, correct, score, {s_prefix}_att, {s_prefix}_cor) 
+                    VALUES (?, ?, 1, ?, ?, 1, ?)
+                    ON CONFLICT(user_id, chat_id) DO UPDATE SET 
+                        attempted = attempted + 1, 
+                        correct = correct + ?, 
+                        score = score + ?,
+                        {s_prefix}_att = {s_prefix}_att + 1, 
+                        {s_prefix}_cor = {s_prefix}_cor + ?
+                """
+                conn.execute(sql_grp, (user_id, chat_id, correct_inc, score_change, correct_inc, correct_inc, score_change, correct_inc))
+            else:
+                conn.execute("""
+                    INSERT INTO group_stats (user_id, chat_id, attempted, correct, score) 
+                    VALUES (?, ?, 1, ?, ?)
+                    ON CONFLICT(user_id, chat_id) DO UPDATE SET 
+                        attempted = attempted + 1, correct = correct + ?, score = score + ?
+                """, (user_id, chat_id, correct_inc, score_change, correct_inc, score_change))
+                      
 
 def get_leaderboard_data(chat_id=None, limit=25):
     with get_db() as conn:
