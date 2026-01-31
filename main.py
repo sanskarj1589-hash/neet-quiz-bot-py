@@ -68,6 +68,50 @@ async def is_admin(user_id: int) -> bool:
     with db.get_db() as conn:
         res = conn.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,)).fetchone()
         return res is not None
+
+# Constants for Force Sub
+CHANNELS = ["@NEETIQBOTUPDATES", "@SANSKAR279"]
+INVITE_LINKS = {
+    "@NEETIQBOTUPDATES": "https://t.me/NEETIQBOTUPDATES",
+    "@SANSKAR279": "https://t.me/SANSKAR279"
+}
+
+async def check_subscription(user_id, bot):
+    """Returns True if user is in all required channels."""
+    for channel in CHANNELS:
+        try:
+            member = await bot.get_chat_member(channel, user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        except Exception:
+            # If bot is not admin in channel, this might fail
+            return False
+    return True
+
+def get_sub_keyboard():
+    """Generates the subscription keyboard."""
+    buttons = [
+        [InlineKeyboardButton("📢 Join Updates", url=INVITE_LINKS["@NEETIQBOTUPDATES"])],
+        [InlineKeyboardButton("💎 Join SANSKAR", url=INVITE_LINKS["@SANSKAR279"])],
+        [InlineKeyboardButton("🔄 Verify Joined", callback_data="verify_sub")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+async def verify_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Check if they actually joined now
+    if await check_subscription(user_id, context.bot):
+        await query.answer("✅ Verification successful! Welcome back.", show_alert=True)
+        # Delete the "Join Channel" message to clean up the chat
+        await query.message.delete()
+        # Re-trigger the start command to show the welcome message
+        await start(update, context) 
+    else:
+        # Show an alert if they still haven't joined
+        await query.answer("❌ You still haven't joined both channels!", show_alert=True)
+		
 		
 # ---------------- REGISTRATION ----------------
 
@@ -75,22 +119,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     
-    # Securely escape the user's name to prevent HTML parsing errors
+    # 1. Force Subscription Check
+    # Users must be in the channels to use the bot in private
+    if chat.type == 'private':
+        if not await check_subscription(user.id, context.bot):
+            return await update.message.reply_text(
+                "⚠️ <b>Access Denied!</b>\n\nYou must join our official channels to use NEETIQBot. "
+                "Click the buttons below to join, then click <b>Verify Joined</b>.",
+                reply_markup=get_sub_keyboard(),
+                parse_mode="HTML"
+            )
+
+    # 2. Database Registration (User & Group)
     safe_name = html.escape(user.first_name)
-    
     with db.get_db() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
             (user.id, user.username, user.first_name, str(datetime.now()))
         )
         if chat.type != 'private':
-            # Escape chat title for safety
-            safe_title = html.escape(chat.title) if chat.title else "this group"
             conn.execute(
                 "INSERT OR IGNORE INTO chats (chat_id, type, title, added_at) VALUES (?,?,?,?)",
                 (chat.id, chat.type, chat.title, str(datetime.now()))
             )
 
+    # 3. Welcome Messages
     if chat.type == 'private':
         welcome = (
             f"👋 <b>Welcome to NEETIQBot, {safe_name}!</b>\n\n"
@@ -98,7 +151,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "I provide high-quality MCQs, track your streaks, and manage competitive leaderboards.\n\n"
             "📌 <b>Use</b> /help <b>to see all available commands.</b>"
         )
-        # It's better to fetch username dynamically in case you change it
         bot_username = context.bot.username
         btn = [[InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_username}?startgroup=true")]]
         
@@ -111,7 +163,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         safe_title = html.escape(chat.title) if chat.title else "Group"
         group_msg = f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\nPreparing <b>{safe_title}</b> for upcoming quizzes."
         await update.message.reply_text(apply_footer(group_msg), parse_mode="HTML")
-
+		
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "📖 <b>NEETIQBot Command List</b>\n\n"
@@ -126,12 +178,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/leaderboard</code> - Global rankings (Top 25)\n"
         "<code>/groupleaderboard</code> - Group specific rankings"
     )
+
+    # Creating the Inline Button for Support
+    keyboard = [
+        [InlineKeyboardButton("⚒️ NEETIQbot Support ", url="https://t.me/NEETIQsupportbot")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
         apply_footer(help_text), 
+        reply_markup=reply_markup,
         parse_mode="HTML"
 	)
-
+	
 
 # ---------------- QUIZ SYSTEM ----------------
 
@@ -653,69 +712,149 @@ async def delallcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcasts a message to all users and groups with rate-limiting safety."""
-    if not await is_admin(update.effective_user.id):
-        return
+    """Broadcasts with selection buttons and exact formatting preservation."""
+    if not await is_admin(update.effective_user.id): return
 
-    # Extract message text
-    if not context.args:
+    # Capture the message with HTML formatting preserved
+    if update.message.reply_to_message:
+        broadcast_msg = update.message.reply_to_message.text_html
+    else:
+        # Removes the command '/broadcast' but keeps all other formatting/spacing
+        broadcast_msg = update.message.text_html.split(None, 1)[1] if len(update.message.text.split()) > 1 else ""
+
+    if not broadcast_msg:
         return await update.message.reply_text(
-            "❌ <b>Usage:</b> <code>/broadcast &lt;message&gt;</code>", 
+            "❌ <b>Error:</b> Please provide text or reply to a message.\n"
+            "Usage: <code>/broadcast Your Message</code>", 
             parse_mode="HTML"
         )
+
+    # Store message in memory for the button click
+    context.user_data['pending_bc'] = broadcast_msg
+
+    buttons = [
+        [InlineKeyboardButton("👤 Users", callback_data="bc_users"),
+         InlineKeyboardButton("👥 Groups", callback_data="bc_groups")],
+        [InlineKeyboardButton("🌍 Both (Users + Groups)", callback_data="bc_both")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="bc_cancel")]
+    ]
     
-    msg_text = " ".join(context.args)
-    
-    # Notify admin that the process started
-    status_msg = await update.message.reply_text("⏳ <b>Starting Broadcast...</b>", parse_mode="HTML")
-
-    with db.get_db() as conn:
-        users = conn.execute("SELECT user_id FROM users").fetchall()
-        groups = conn.execute("SELECT chat_id FROM chats").fetchall()
-
-    u_ok, g_ok, u_fail, g_fail = 0, 0, 0, 0
-    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
-    announcement_header = f"📢 <b>NEETIQ ANNOUNCEMENT</b>\n{divider}\n\n"
-
-    # 1. Broadcast to Users
-    for u in users:
-        try:
-            await context.bot.send_message(
-                chat_id=u[0], 
-                text=f"{announcement_header}{msg_text}\n\n{divider}",
-                parse_mode="HTML"
-            )
-            u_ok += 1
-            # Telegram Limit: ~30 messages per second. 0.05s delay is safe.
-            await asyncio.sleep(0.05) 
-        except Exception:
-            u_fail += 1
-
-    # 2. Broadcast to Groups
-    for g in groups:
-        try:
-            await context.bot.send_message(
-                chat_id=g[0], 
-                text=f"{announcement_header}{msg_text}\n\n{divider}",
-                parse_mode="HTML"
-            )
-            g_ok += 1
-            await asyncio.sleep(0.05)
-        except Exception:
-            g_fail += 1
-
-    # 3. Final Report
-    report = (
-        "✅ <b>BROADCAST COMPLETE</b>\n"
-        f"{divider}\n"
-        f"👤 <b>Users reached:</b> <code>{u_ok}</code>\n"
-        f"👥 <b>Groups reached:</b> <code>{g_ok}</code>\n"
-        f"⚠️ <b>Failed attempts:</b> <code>{u_fail + g_fail}</code>\n"
-        f"{divider}"
+    await update.message.reply_text(
+        f"📢 <b>BROADCAST PREVIEW:</b>\n\n{broadcast_msg}\n\n<b>Where should I send this?</b>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="HTML"
     )
 
-    await status_msg.edit_text(report, parse_mode="HTML")
-			
+async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the selection and sends the formatted message."""
+    query = update.callback_query
+    action = query.data
+    
+    if action == "bc_cancel":
+        context.user_data.pop('pending_bc', None)
+        return await query.edit_message_text("❌ Broadcast cancelled.")
+
+    msg = context.user_data.get('pending_bc')
+    if not msg:
+        return await query.answer("❌ Data lost. Send /broadcast again.", show_alert=True)
+
+    await query.edit_message_text("🚀 <b>Broadcasting...</b>", parse_mode="HTML")
+
+    targets = []
+    with db.get_db() as conn:
+        if action in ["bc_users", "bc_both"]:
+            targets.extend([r[0] for r in conn.execute("SELECT user_id FROM users").fetchall()])
+        if action in ["bc_groups", "bc_both"]:
+            targets.extend([r[0] for r in conn.execute("SELECT chat_id FROM chats").fetchall()])
+
+    # Remove duplicates and send
+    targets = list(set(targets))
+    success, fail = 0, 0
+
+    for t_id in targets:
+        try:
+            # text_html is key here to keep your spacing and bolding
+            await context.bot.send_message(chat_id=t_id, text=msg, parse_mode="HTML")
+            success += 1
+            await asyncio.sleep(0.05) # Prevent flood limits
+        except Exception:
+            fail += 1
+
+    await query.message.reply_text(
+        f"✅ <b>Broadcast Finished</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"🎯 Success: <code>{success}</code>\n"
+        f"⚠️ Failed: <code>{fail}</code>",
+        parse_mode="HTML"
+    )
+    context.user_data.pop('pending_bc', None)
+
+
+async def scorecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    # --- PRIVATE CHAT CHECK ---
+    if chat.type != 'private':
+        # Optional: You can send a message or just return. 
+        # Here we reply with a tip to use the bot in DM.
+        return await update.message.reply_text(
+            "❌ <b>Access Denied!</b>\n\nFor privacy reasons, your detailed scorecard can only be viewed in a private chat with the bot.",
+            parse_mode="HTML"
+        )
+
+    with db.get_db() as conn:
+        # Fetch stats from the updated columns
+        s = conn.execute("SELECT * FROM stats WHERE user_id = ?", (user.id,)).fetchone()
+    
+    if not s:
+        return await update.message.reply_text("❌ <b>No data found!</b> Start solving quizzes to see your progress.", parse_mode="HTML")
+
+    # Helper function to calculate accuracy safely
+    def get_acc(cor, att):
+        return round((cor / att * 100), 1) if att > 0 else 0
+
+    # Calculating accuracies
+    bio_acc = get_acc(s['bio_cor'], s['bio_att'])
+    phy_acc = get_acc(s['phy_cor'], s['phy_att'])
+    che_acc = get_acc(s['che_cor'], s['che_att'])
+
+    # Formatting the Scorecard
+    scorecard_msg = (
+        f"🪪 <b>NEETIQ USER SCORECARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>NAME :</b> {html.escape(user.first_name)}\n"
+        f"🏅 <b>RANK :</b> <b>Aspirant</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>POSITION & PROGRESS</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 🏆 Global  : #Rank</code>\n" 
+        f"<code>│ 👥 Group   : #Rank</code>\n"
+        f"<code>│ 🧬 Total XP: {s['score']}</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"📊 <b>SUBJECT PERFORMANCE</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 🧬 BIO : {s['bio_cor']}/{s['bio_att']}</code>\n"
+        f"<code>│ ⚡ PHY : {s['phy_cor']}/{s['phy_att']}</code>\n"
+        f"<code>│ 🧪 CHE : {s['che_cor']}/{s['che_att']}</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"📈 <b>ACCURACY TRACKER</b>\n"
+        f"<code>╭────────────────────</code>\n" 
+        f"<code>│ 🧬 BIO : {bio_acc}%</code>\n"
+        f"<code>│ ⚡ PHY : {phy_acc}%</code>\n"
+        f"<code>│ 🧪 CHE : {che_acc}%</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"🔥 <b>STREAK MONITOR</b>\n"
+        f"<code>╭────────────────────</code>\n" 
+        f"<code>┌.   Current   : {s['current_streak']}</code>\n"
+        f"<code>└.     Best      : {s['max_streak']}</code>\n"
+        f"<code>╰────────────────────</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>NEETIQbot</b>"
+    )
+
+    await update.message.reply_text(scorecard_msg, parse_mode="HTML")
+
 
 # ---------------- SETTINGS (FOOTER & AUTOQUIZ) ----------------
 
@@ -1100,7 +1239,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("adminlist", adminlist))
     application.add_handler(CommandHandler("addquestion", addquestion))
     application.add_handler(CommandHandler("questions", questions_stats))
-    application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("addcompliment", addcompliment))
     application.add_handler(CommandHandler("listcompliments", listcompliments))
     application.add_handler(CommandHandler("delcompliment", delcompliment))
@@ -1108,7 +1246,13 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("autoquiz", autoquiz))
     application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
+    application.add_handler(CommandHandler("scorecard", scorecard))
 
+	# Add this among your other CallbackQueryHandlers
+    application.add_handler(CallbackQueryHandler(verify_sub_callback, pattern="^verify_sub$"))
+    # Inside main()
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CallbackQueryHandler(broadcast_callback, pattern="^bc_"))
     # Special Handlers
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
