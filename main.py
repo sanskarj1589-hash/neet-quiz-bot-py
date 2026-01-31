@@ -99,11 +99,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         bot_username = context.bot.username
+        
+        # Each button is now in its own inner list [] to force a vertical stack
         buttons = [
-            [
-                InlineKeyboardButton("📢 NEETIQBOT Updates", url="https://t.me/NEETIQBOTUPDATES"),
-                InlineKeyboardButton("🛠️ Contact Us", url="https://t.me/NEETIQsupportbot")
-            ],
+            [InlineKeyboardButton("📢 NEETIQBOT Updates", url="https://t.me/NEETIQBOTUPDATES")],
+            [InlineKeyboardButton("🛠️ Contact Us", url="https://t.me/NEETIQsupportbot")],
             [InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_username}?startgroup=true")]
         ]
         
@@ -117,6 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         safe_title = html.escape(chat.title) if chat.title else "this group"
         group_msg = f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\nPreparing <b>{safe_title}</b> for upcoming quizzes."
         await update.message.reply_text(apply_footer(group_msg), parse_mode="HTML")
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
