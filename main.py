@@ -240,7 +240,7 @@ async def send_random_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Failed to process the quiz. Please check database logs.")
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes answer and sends compliments using stable database queries."""
+    """Processes answer and updates subject-specific stats."""
     answer = update.poll_answer
     poll_id = answer.poll_id
     user = answer.user  
@@ -252,7 +252,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     username = user.username
     first_name = user.first_name
 
-    # 1. Sync User and Fetch Poll Data
+    # 1. Sync User and Fetch Poll Data (including subject)
     with db.get_db() as conn:
         conn.execute("""
             INSERT INTO users (user_id, username, first_name)
@@ -262,8 +262,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 first_name = excluded.first_name
         """, (user_id, username, first_name))
         
+        # We now SELECT 'subject' as well
         poll_data = conn.execute(
-            "SELECT chat_id, correct_option_id FROM active_polls WHERE poll_id = ?", 
+            "SELECT chat_id, correct_option_id, subject FROM active_polls WHERE poll_id = ?", 
             (poll_id,)
         ).fetchone()
 
@@ -272,24 +273,31 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     chat_id = poll_data[0]
     correct_option = poll_data[1]
+    subject = poll_data[2] # Biology, Physics, or Chemistry
+    
     is_correct = (len(answer.option_ids) > 0 and answer.option_ids[0] == correct_option)
 
-    # 2. Update Stats
-    db.update_user_stats(user_id, chat_id, is_correct, username=username, first_name=first_name)
+    # 2. Update Stats (Now passing the subject)
+    db.update_user_stats(
+        user_id, 
+        chat_id, 
+        is_correct, 
+        subject=subject, 
+        username=username, 
+        first_name=first_name
+    )
 
-    # 3. Stable Compliment Logic
+    # 3. Compliment Logic (Remains the same)
     with db.get_db() as conn:
-        # Check if enabled
         setting = conn.execute(
             "SELECT compliments_enabled FROM group_settings WHERE chat_id = ?", 
             (chat_id,)
         ).fetchone()
+        
         if setting and setting[0] == 0:
             return
 
         c_type = "correct" if is_correct else "wrong"
-
-        # Split query for Turso stability: Try group first, then global
         comp = conn.execute(
             "SELECT text FROM group_compliments WHERE chat_id = ? AND type = ? ORDER BY RANDOM() LIMIT 1",
             (chat_id, c_type)
@@ -305,7 +313,6 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         compliment_text = comp[0]
         safe_name = html.escape(first_name)
         
-        # Format mention
         if username:
             mention_name = f"<b>@{html.escape(username)}</b>"
         else:
@@ -313,8 +320,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
         final_text = compliment_text.replace("{user}", mention_name)
 
-        # Only broadcast in groups
-        if chat_id < 0:
+        if chat_id < 0: # Only send compliments in groups
             try:
                 await context.bot.send_message(
                     chat_id=chat_id, 
@@ -323,8 +329,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     disable_web_page_preview=True
                 )
             except Exception as e:
-                print(f"Error sending compliment: {e}")
-				
+                logger.error(f"Error sending compliment: {e}")
+
+
 # ---------------- PERFORMANCE STATS ----------------
 
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
