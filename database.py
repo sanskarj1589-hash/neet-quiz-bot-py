@@ -126,4 +126,34 @@ def update_user_stats(user_id, chat_id, is_correct, subject=None, username=None,
                     ON CONFLICT(user_id, chat_id) DO UPDATE SET 
                         attempted = attempted + 1, correct = correct + ?, score = score + ?
                 """, (user_id, chat_id, correct_inc, score_change, correct_inc, score_change))
-              
+
+def get_leaderboard_data(chat_id=None, limit=25):
+    """Fetches global or group leaderboard with proper name formatting."""
+    with get_db() as conn:
+        # Professional name formatting: Priority Username > First Name > ID
+        name_sql = """
+            COALESCE(
+                CASE WHEN u.username IS NOT NULL AND u.username != '' THEN '@' || u.username ELSE NULL END,
+                u.first_name,
+                'Aspirant ' || stats_table.user_id
+            ) AS display_name
+        """
+        if chat_id:
+            query = f"SELECT {name_sql.replace('stats_table', 'gs')}, gs.score FROM group_stats gs LEFT JOIN users u ON gs.user_id = u.user_id WHERE gs.chat_id = ? ORDER BY gs.score DESC LIMIT ?"
+            return conn.execute(query, (chat_id, limit)).fetchall()
+        else:
+            query = f"SELECT {name_sql.replace('stats_table', 's')}, s.score FROM stats s LEFT JOIN users u ON s.user_id = u.user_id ORDER BY s.score DESC LIMIT ?"
+            return conn.execute(query, (limit,)).fetchall()
+
+def get_user_rank(user_id):
+    """Calculates the global rank of a user based on score."""
+    with get_db() as conn:
+        res = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > (SELECT score FROM stats WHERE user_id = ?)", (user_id,)).fetchone()
+        return res[0] if res else "N/A"
+
+def get_group_user_rank(chat_id, user_id):
+    """Calculates the rank of a user within a specific group."""
+    with get_db() as conn:
+        res = conn.execute("SELECT COUNT(*) + 1 FROM group_stats WHERE chat_id = ? AND score > (SELECT score FROM group_stats WHERE chat_id = ? AND user_id = ?)", (chat_id, chat_id, user_id)).fetchone()
+        return res[0] if res else "N/A"
+        
