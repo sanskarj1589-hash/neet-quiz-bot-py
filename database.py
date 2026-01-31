@@ -44,6 +44,7 @@ def get_db():
 def init_db():
     with get_db() as conn:
         # Create core tables if they don't exist
+        conn.execute("CREATE TABLE IF NOT EXISTS active_polls (poll_id TEXT PRIMARY KEY, chat_id INTEGER, correct_option_id INTEGER)")
         conn.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, joined_at TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, type TEXT, title TEXT, added_at TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS questions (poll_id TEXT PRIMARY KEY, message_id INTEGER, chat_id INTEGER)")
