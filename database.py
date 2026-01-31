@@ -1,4 +1,160 @@
+import os
+import asyncio
+import libsql_client
+from contextlib import asynccontextmanager
+from datetime import datetime
 
+# --- CONFIGURATION ---
+TURSO_URL = os.environ.get("TURSO_URL")
+TURSO_TOKEN = os.environ.get("TURSO_TOKEN")
+
+# --- TURSO ASYNC COMPATIBILITY LAYER ---
+class RowWrapper:
+    """Mimics sqlite3.Row for async Turso results."""
+    def __init__(self, row, columns):
+        self.row = row
+        self.columns = columns
+    def __getitem__(self, key):
+        if isinstance(key, str): return self.row[self.columns.index(key)]
+        return self.row[key]
+    def __iter__(self): return iter(self.row)
+
+class TursoCursor:
+    def __init__(self, client):
+        self.client = client
+    
+    async def execute(self, sql, params=()):
+        # MUST await the execution in the new library version
+        res = await self.client.execute(sql, params)
+        self.rows = [RowWrapper(r, res.columns) for r in res.rows]
+        return self
+    
+    def fetchone(self): return self.rows[0] if self.rows else None
+    def fetchall(self): return self.rows
+
+class TursoClientWrapper:
+    def __init__(self, url, token):
+        self.client = libsql_client.create_client(url=url, auth_token=token)
+    def cursor(self): return TursoCursor(self.client)
+    async def close(self): await self.client.close()
+
+@asynccontextmanager
+async def get_db():
+    """Async context manager for Turso connections."""
+    client = TursoClientWrapper(TURSO_URL, TURSO_TOKEN)
+    try:
+        yield client.cursor()
+    finally:
+        await client.close()
+
+
+# --- INITIALIZATION & MIGRATION ---
+async def init_db():
+    """Asynchronous database initialization."""
+    async with get_db() as conn:
+        # 1. Create Core Tables (using await for every command)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                poll_id TEXT UNIQUE,
+                message_id INTEGER,
+                chat_id INTEGER,
+                question TEXT,
+                subject TEXT DEFAULT 'General',
+                correct_option_id INTEGER
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS active_polls (
+                poll_id TEXT PRIMARY KEY, 
+                chat_id INTEGER, 
+                correct_option_id INTEGER
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY, 
+                username TEXT, 
+                first_name TEXT, 
+                joined_at TEXT,
+                source TEXT DEFAULT 'Group',
+                status TEXT DEFAULT 'active'
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chats (
+                chat_id INTEGER PRIMARY KEY, 
+                type TEXT, 
+                title TEXT, 
+                added_at TEXT,
+                status TEXT DEFAULT 'active'
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS stats (
+                user_id INTEGER PRIMARY KEY, 
+                score INTEGER DEFAULT 0, 
+                correct INTEGER DEFAULT 0, 
+                attempted INTEGER DEFAULT 0,
+                current_streak INTEGER DEFAULT 0,
+                max_streak INTEGER DEFAULT 0,
+                bio_att INTEGER DEFAULT 0, bio_cor INTEGER DEFAULT 0,
+                phy_att INTEGER DEFAULT 0, phy_cor INTEGER DEFAULT 0,
+                che_att INTEGER DEFAULT 0, che_cor INTEGER DEFAULT 0
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_stats (
+                user_id INTEGER, 
+                chat_id INTEGER, 
+                score INTEGER DEFAULT 0, 
+                correct INTEGER DEFAULT 0, 
+                attempted INTEGER DEFAULT 0,
+                bio_att INTEGER DEFAULT 0, bio_cor INTEGER DEFAULT 0,
+                phy_att INTEGER DEFAULT 0, phy_cor INTEGER DEFAULT 0,
+                che_att INTEGER DEFAULT 0, che_cor INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, chat_id)
+            )
+        """)
+
+        await conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        await conn.execute("CREATE TABLE IF NOT EXISTS compliments (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, text TEXT)")
+
+        # 2. Migration Logic
+        migrations = [
+            ("users", "source TEXT DEFAULT 'Group'"),
+            ("users", "status TEXT DEFAULT 'active'"),
+            ("chats", "status TEXT DEFAULT 'active'"),
+            ("questions", "subject TEXT DEFAULT 'General'"),
+            ("questions", "correct_option_id INTEGER"),
+            ("stats", "current_streak INTEGER DEFAULT 0"),
+            ("stats", "max_streak INTEGER DEFAULT 0"),
+            ("stats", "bio_att INTEGER DEFAULT 0"), ("stats", "bio_cor INTEGER DEFAULT 0"),
+            ("stats", "phy_att INTEGER DEFAULT 0"), ("stats", "phy_cor INTEGER DEFAULT 0"),
+            ("stats", "che_att INTEGER DEFAULT 0"), ("stats", "che_cor INTEGER DEFAULT 0"),
+            ("group_stats", "bio_att INTEGER DEFAULT 0"), ("group_stats", "bio_cor INTEGER DEFAULT 0"),
+            ("group_stats", "phy_att INTEGER DEFAULT 0"), ("group_stats", "phy_cor INTEGER DEFAULT 0"),
+            ("group_stats", "che_att INTEGER DEFAULT 0"), ("group_stats", "che_cor INTEGER DEFAULT 0")
+        ]
+
+        for table, col_def in migrations:
+            try:
+                await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
+            except:
+                pass 
+
+        # 3. Default Settings
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_quiz', 'on')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('autoquiz_interval', '30')")
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('total_sent', '0')")
+        
+    print("✅ Database Verified and Synchronized (Async Mode).")
+    
 
 
 # --- QUESTION MANAGEMENT ---
