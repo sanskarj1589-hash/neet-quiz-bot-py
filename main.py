@@ -39,6 +39,119 @@ logger = logging.getLogger(__name__)
 # Note: Using standard Markdown for simplicity to avoid escape errors
 defaults = Defaults(parse_mode="Markdown")
 
+# --- CONFIGURATION ---
+# --- FORCE JOIN CONFIG --
+# --- CONFIGURATION ---
+# Numerical IDs are more reliable; replace with your actual IDs if different
+CHANNEL_IDS =  [-1002973969945, -1002976165717] 
+UPDATE_CHANNEL = "@NEETIQBOTUPDATES"
+SUPPORT_CHANNEL = "@SANSKAR279"
+SUPPORT_BOT = "@NEETIQsupportbot"
+
+# --- HELPERS ---
+async def is_subscribed(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Checks if a user is a member of all required channels."""
+    for channel_id in CHANNEL_IDS:
+        try:
+            member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+            if member.status in ['left', 'kicked']:
+                return False
+        except Exception as e:
+            logger.error(f"Membership check failed for {channel_id}: {e}")
+            return False
+    return True
+
+# --- UPDATED START COMMAND ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    # 1. Force Subscription Check (Private Chats Only)
+    if chat.type == 'private':
+        subscribed = await is_subscribed(user.id, context)
+        
+        if not subscribed:
+            # Buttons for joining and retrying
+            btn = [
+                [InlineKeyboardButton("📢 Join Updates", url=f"https://t.me/{UPDATE_CHANNEL.lstrip('@')}")],
+                [InlineKeyboardButton("💬 Join Support", url=f"https://t.me/{SUPPORT_CHANNEL.lstrip('@')}")],
+                [InlineKeyboardButton("🔄 Try Again", url=f"https://t.me/{context.bot.username}?start=true")]
+            ]
+            
+            must_join_text = (
+                "⚠️ <b>Access Denied!</b>\n\n"
+                "To use NEETIQBot, you must be a member of our official channels. "
+                "Please join the channels below and click <b>Try Again</b>."
+            )
+            
+            return await update.message.reply_text(
+                must_join_text,
+                reply_markup=InlineKeyboardMarkup(btn),
+                parse_mode="HTML"
+            )
+
+    # 2. Database Registration Logic
+    safe_name = html.escape(user.first_name)
+    
+    with db.get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
+            (user.id, user.username, user.first_name, str(datetime.now()))
+        )
+        if chat.type != 'private':
+            safe_title = html.escape(chat.title) if chat.title else "this group"
+            conn.execute(
+                "INSERT OR IGNORE INTO chats (chat_id, type, title, added_at) VALUES (?,?,?,?)",
+                (chat.id, chat.type, chat.title, str(datetime.now()))
+            )
+
+    # 3. Welcome Messages
+    if chat.type == 'private':
+        welcome = (
+            f"👋 <b>Welcome to NEETIQBot, {safe_name}!</b>\n\n"
+            "I am your dedicated NEET preparation assistant. "
+            "I provide high-quality MCQs, track your streaks, and manage competitive leaderboards.\n\n"
+            "📌 <b>Use</b> /help <b>to see all available commands.</b>"
+        )
+        bot_username = context.bot.username
+        btn = [[InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_username}?startgroup=true")]]
+        
+        await update.message.reply_text(
+            apply_footer(welcome), 
+            reply_markup=InlineKeyboardMarkup(btn),
+            parse_mode="HTML"
+        )
+    else:
+        safe_title = html.escape(chat.title) if chat.title else "Group"
+        group_msg = f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\nPreparing <b>{safe_title}</b> for upcoming quizzes."
+        await update.message.reply_text(apply_footer(group_msg), parse_mode="HTML")
+
+# --- UPDATED HELP COMMAND ---
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "📖 <b>NEETIQBot Command List</b>\n\n"
+        "👋 <b>Basic Commands</b>\n"
+        "<code>/start</code> - Register and start the bot\n"
+        "<code>/help</code> - Display this help manual\n\n"
+        "📘 <b>Quiz System</b>\n"
+        "<code>/randomquiz</code> - Receive a random NEET MCQ\n"
+        "<code>/myscore</code> - View your point summary\n"
+        "<code>/mystats</code> - Detailed performance analysis\n\n"
+        "🏆 <b>Leaderboards</b>\n"
+        "<code>/leaderboard</code> - Global rankings\n"
+        "<code>/groupleaderboard</code> - Group specific rankings"
+    )
+    
+    # Inline button for support bot
+    btn = [[InlineKeyboardButton("🆘 Contact Support", url=f"https://t.me/{SUPPORT_BOT.lstrip('@')}")]]
+    
+    await update.message.reply_text(
+        apply_footer(help_text), 
+        reply_markup=InlineKeyboardMarkup(btn),
+        parse_mode="HTML"
+	)
+	
+
 # ---------------- HELPERS ----------------
 MAX_MESSAGE_LENGTH = 4000  # Safe limit
 
@@ -70,67 +183,6 @@ async def is_admin(user_id: int) -> bool:
         return res is not None
 		
 # ---------------- REGISTRATION ----------------
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat = update.effective_chat
-    
-    # Securely escape the user's name to prevent HTML parsing errors
-    safe_name = html.escape(user.first_name)
-    
-    with db.get_db() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
-            (user.id, user.username, user.first_name, str(datetime.now()))
-        )
-        if chat.type != 'private':
-            # Escape chat title for safety
-            safe_title = html.escape(chat.title) if chat.title else "this group"
-            conn.execute(
-                "INSERT OR IGNORE INTO chats (chat_id, type, title, added_at) VALUES (?,?,?,?)",
-                (chat.id, chat.type, chat.title, str(datetime.now()))
-            )
-
-    if chat.type == 'private':
-        welcome = (
-            f"👋 <b>Welcome to NEETIQBot, {safe_name}!</b>\n\n"
-            "I am your dedicated NEET preparation assistant. "
-            "I provide high-quality MCQs, track your streaks, and manage competitive leaderboards.\n\n"
-            "📌 <b>Use</b> /help <b>to see all available commands.</b>"
-        )
-        # It's better to fetch username dynamically in case you change it
-        bot_username = context.bot.username
-        btn = [[InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_username}?startgroup=true")]]
-        
-        await update.message.reply_text(
-            apply_footer(welcome), 
-            reply_markup=InlineKeyboardMarkup(btn),
-            parse_mode="HTML"
-        )
-    else:
-        safe_title = html.escape(chat.title) if chat.title else "Group"
-        group_msg = f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\nPreparing <b>{safe_title}</b> for upcoming quizzes."
-        await update.message.reply_text(apply_footer(group_msg), parse_mode="HTML")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "📖 <b>NEETIQBot Command List</b>\n\n"
-        "👋 <b>Basic Commands</b>\n"
-        "<code>/start</code> - Register and start the bot\n"
-        "<code>/help</code> - Display this help manual\n\n"
-        "📘 <b>Quiz System</b>\n"
-        "<code>/randomquiz</code> - Receive a random NEET MCQ\n"
-        "<code>/myscore</code> - View your point summary\n"
-        "<code>/mystats</code> - Detailed performance analysis\n\n"
-        "🏆 <b>Leaderboards</b>\n"
-        "<code>/leaderboard</code> - Global rankings (Top 25)\n"
-        "<code>/groupleaderboard</code> - Group specific rankings"
-    )
-    
-    await update.message.reply_text(
-        apply_footer(help_text), 
-        parse_mode="HTML"
-	)
 
 
 # ---------------- QUIZ SYSTEM ----------------
