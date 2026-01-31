@@ -488,7 +488,92 @@ async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: `/removeadmin <user_id>`")
 
 # ---------------- QUESTION MANAGEMENT ----------------
+async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Adds questions with subject detection (Bio/Phy/Che)."""
+    if not await is_admin(update.effective_user.id): return
+    
+    content = ""
+    if update.message.document and update.message.document.file_name.endswith('.txt'):
+        file = await context.bot.get_file(update.message.document.file_id)
+        content = (await file.download_as_bytearray()).decode('utf-8')
+    elif update.message.text:
+        content = update.message.text.replace("/addquestion", "").strip()
 
+    if not content:
+        return await update.message.reply_text("❌ Please provide text or a .txt file.")
+
+    raw_entries = [e.strip() for e in content.split('\n\n') if e.strip()]
+    added_count = 0
+    skipped_count = 0
+
+    with db.get_db() as conn:
+        for entry in raw_entries:
+            lines = [l.strip() for l in entry.split('\n') if l.strip()]
+            
+            if len(lines) >= 7:
+                try:
+                    explanation = lines[-1]
+                    correct = str(lines[-2]).strip().upper()
+                    opt_d = lines[-3]
+                    opt_c = lines[-4]
+                    opt_b = lines[-5]
+                    opt_a = lines[-6]
+                    full_q_text = "\n".join(lines[:-6])
+
+                    # --- SUBJECT DETECTION LOGIC ---
+                    subject = "General"
+                    clean_q_text = full_q_text
+                    
+                    if full_q_text.lower().startswith("biology:"):
+                        subject = "Biology"
+                        clean_q_text = full_q_text[8:].strip()
+                    elif full_q_text.lower().startswith("physics:"):
+                        subject = "Physics"
+                        clean_q_text = full_q_text[8:].strip()
+                    elif full_q_text.lower().startswith("chemistry:"):
+                        subject = "Chemistry"
+                        clean_q_text = full_q_text[10:].strip()
+
+                    if correct not in ['1', '2', '3', '4', 'A', 'B', 'C', 'D']:
+                        skipped_count += 1
+                        continue
+
+                    # Insert with the new 'subject' column
+                    conn.execute(
+                        "INSERT INTO questions (question, a, b, c, d, correct, explanation, subject) VALUES (?,?,?,?,?,?,?,?)",
+                        (clean_q_text, opt_a, opt_b, opt_c, opt_d, correct, explanation, subject)
+                    )
+                    added_count += 1
+                except Exception as e:
+                    logger.error(f"Error adding question: {e}")
+                    skipped_count += 1
+            else:
+                skipped_count += 1
+
+    await update.message.reply_text(apply_footer(f"📊 *Import Summary:*\n✅ Added: `{added_count}`\n⚠️ Skipped: `{skipped_count}`"))
+	
+
+async def questions_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays total questions broken down by subject."""
+    if not await is_admin(update.effective_user.id): return
+    
+    with db.get_db() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
+        bio = conn.execute("SELECT COUNT(*) FROM questions WHERE subject='Biology'").fetchone()[0]
+        phy = conn.execute("SELECT COUNT(*) FROM questions WHERE subject='Physics'").fetchone()[0]
+        che = conn.execute("SELECT COUNT(*) FROM questions WHERE subject='Chemistry'").fetchone()[0]
+        gen = conn.execute("SELECT COUNT(*) FROM questions WHERE subject='General'").fetchone()[0]
+
+    stats_msg = (
+        "📘 <b>Question Bank Overview</b>\n\n"
+        f"🧬 <b>Biology:</b> <code>{bio}</code>\n"
+        f"⚡ <b>Physics:</b> <code>{phy}</code>\n"
+        f"🧪 <b>Chemistry:</b> <code>{che}</code>\n"
+        f"📝 <b>General/Other:</b> <code>{gen}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>Total Questions:</b> <code>{total}</code>"
+    )
+    await update.message.reply_text(apply_footer(stats_msg), parse_mode="HTML")
 
 
 async def del_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
