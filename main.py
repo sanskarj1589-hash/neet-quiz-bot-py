@@ -143,7 +143,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Inline button for support bot
-    btn = [[InlineKeyboardButton("🆘 Contact Support", url=f"https://t.me/{SUPPORT_BOT.lstrip('@')}")]]
+    btn = [[InlineKeyboardButton(" Contact Support", url=f"https://t.me/{SUPPORT_BOT.lstrip('@')}")]]
     
     await update.message.reply_text(
         apply_footer(help_text), 
@@ -676,70 +676,152 @@ async def delallcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ *Error:* {e}")
 
 
+
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcasts a message to all users and groups with rate-limiting safety."""
+    """Initiates broadcast by asking for target audience."""
     if not await is_admin(update.effective_user.id):
         return
 
-    # Extract message text
+    # Check if message is provided
     if not context.args:
         return await update.message.reply_text(
             "❌ <b>Usage:</b> <code>/broadcast &lt;message&gt;</code>", 
             parse_mode="HTML"
         )
     
+    # Store message in context to use it in the callback
     msg_text = " ".join(context.args)
-    
-    # Notify admin that the process started
-    status_msg = await update.message.reply_text("⏳ <b>Starting Broadcast...</b>", parse_mode="HTML")
+    context.user_data['broadcast_msg'] = msg_text
 
-    with db.get_db() as conn:
-        users = conn.execute("SELECT user_id FROM users").fetchall()
-        groups = conn.execute("SELECT chat_id FROM chats").fetchall()
+    buttons = [
+        [
+            InlineKeyboardButton("👤 Users", callback_data="bc_users"),
+            InlineKeyboardButton("👥 Groups", callback_data="bc_groups")
+        ],
+        [InlineKeyboardButton("🌍 Both (Users & Groups)", callback_data="bc_both")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="bc_cancel")]
+    ]
+
+    await update.message.reply_text(
+        f"📢 <b>Broadcast Preview:</b>\n\n{msg_text}\n\n<b>Select destination:</b>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="HTML"
+		)
+
+async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    user_id = query.from_user.id
+
+    if not await is_admin(user_id):
+        return await query.answer("Unauthorized", show_alert=True)
+
+    if data == "bc_cancel":
+        return await query.edit_message_text("❌ Broadcast Cancelled.")
+
+    msg_text = context.user_data.get('broadcast_msg')
+    if not msg_text:
+        return await query.edit_message_text("❌ Error: Message content lost. Try again.")
+
+    await query.answer("Starting Broadcast...")
+    status_msg = await query.edit_message_text("⏳ <b>Processing Broadcast...</b>", parse_mode="HTML")
+
+    # Formatting: Collapsed spacing as requested
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    final_text = f"📢 <b>ANNOUNCEMENT</b>\n{divider}\n{msg_text}\n{divider}"
 
     u_ok, g_ok, u_fail, g_fail = 0, 0, 0, 0
-    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
-    announcement_header = f"📢 <b>NEETIQ ANNOUNCEMENT</b>\n{divider}\n\n"
+    
+    with db.get_db() as conn:
+        users = conn.execute("SELECT user_id FROM users").fetchall() if "users" in data or "both" in data else []
+        groups = conn.execute("SELECT chat_id FROM chats").fetchall() if "groups" in data or "both" in data else []
 
-    # 1. Broadcast to Users
+    # Execute Broadcast
     for u in users:
         try:
-            await context.bot.send_message(
-                chat_id=u[0], 
-                text=f"{announcement_header}{msg_text}\n\n{divider}",
-                parse_mode="HTML"
-            )
+            await context.bot.send_message(chat_id=u[0], text=final_text, parse_mode="HTML")
             u_ok += 1
-            # Telegram Limit: ~30 messages per second. 0.05s delay is safe.
             await asyncio.sleep(0.05) 
-        except Exception:
-            u_fail += 1
+        except Exception: u_fail += 1
 
-    # 2. Broadcast to Groups
     for g in groups:
         try:
-            await context.bot.send_message(
-                chat_id=g[0], 
-                text=f"{announcement_header}{msg_text}\n\n{divider}",
-                parse_mode="HTML"
-            )
+            await context.bot.send_message(chat_id=g[0], text=final_text, parse_mode="HTML")
             g_ok += 1
             await asyncio.sleep(0.05)
-        except Exception:
-            g_fail += 1
+        except Exception: g_fail += 1
 
-    # 3. Final Report
+    # Cleanup and Report
+    context.user_data.pop('broadcast_msg', None)
     report = (
         "✅ <b>BROADCAST COMPLETE</b>\n"
+        f"👤 <b>Users:</b> <code>{u_ok}</code> | 👥 <b>Groups:</b> <code>{g_ok}</code>\n"
+        f"⚠️ <b>Failed:</b> <code>{u_fail + g_fail}</code>"
+    )
+    await status_msg.edit_text(report, parse_mode="HTML")
+	
+
+async def scorecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays a detailed, organized user scorecard in DMs only."""
+    user = update.effective_user
+    chat = update.effective_chat
+
+    # 1. Private Chat Check
+    if chat.type != 'private':
+        return await update.message.reply_text(
+            "❌ <b>Private Feature Only</b>\n"
+            "To view your personal scorecard, please message me directly in DM.",
+            parse_mode="HTML"
+        )
+
+    user_id = user.id
+    
+    # 2. Fetch Data
+    with db.get_db() as conn:
+        # User details
+        user_data = conn.execute(
+            "SELECT joined_at FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        
+        # Performance stats
+        stats = conn.execute(
+            "SELECT attempted, correct, score FROM stats WHERE user_id = ?", (user_id,)
+        ).fetchone()
+
+    # Data Parsing
+    joined_date = user_data[0][:10] if user_data else "N/A"
+    attempted = stats[0] if stats else 0
+    correct = stats[1] if stats else 0
+    total_score = stats[2] if stats else 0
+    
+    # Calculations
+    wrong = attempted - correct
+    accuracy = (correct / attempted * 100) if attempted > 0 else 0
+
+    # 3. Formatting the Output
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━━━</b>"
+    
+    card_text = (
+        f"🏆 <b>NEETIQ PROGRESS REPORT</b>\n"
         f"{divider}\n"
-        f"👤 <b>Users reached:</b> <code>{u_ok}</code>\n"
-        f"👥 <b>Groups reached:</b> <code>{g_ok}</code>\n"
-        f"⚠️ <b>Failed attempts:</b> <code>{u_fail + g_fail}</code>\n"
-        f"{divider}"
+        f"👤 <b>STUDENT:</b> {html.escape(user.first_name)}\n"
+        f"🆔 <b>UID:</b> <code>{user_id}</code>\n"
+        f"📅 <b>JOINED:</b> <code>{joined_date}</code>\n\n"
+        f"📊 <b>PERFORMANCE STATS</b>\n"
+        f"┣ 📝 <b>Attempted:</b> <code>{attempted}</code>\n"
+        f"┣ ✅ <b>Correct:</b> <code>{correct}</code>\n"
+        f"┣ ❌ <b>Incorrect:</b> <code>{wrong}</code>\n"
+        f"┗ 🎯 <b>Accuracy:</b> <code>{accuracy:.1f}%</code>\n\n"
+        f"💰 <b>TOTAL POINTS:</b> <code>{total_score}</code>\n"
+        f"{divider}\n"
+        f"<i>Keep grinding for your medical dream!</i>"
     )
 
-    await status_msg.edit_text(report, parse_mode="HTML")
-			
+    await update.message.reply_text(
+        apply_footer(card_text), 
+        parse_mode="HTML"
+	)
+
 
 # ---------------- SETTINGS (FOOTER & AUTOQUIZ) ----------------
 
@@ -1080,18 +1162,10 @@ def keep_alive():
 
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
-    # 1. Initialize Database
     db.init_db()
-    
-    # 2. Start the Keep-Alive Web Server
-    print("🌐 Starting Keep-Alive server...")
     keep_alive()
-
-    # 3. Define Timezone for Kolkata
     ist_timezone = pytz.timezone('Asia/Kolkata')
 
-    # 4. Build Application using Environment Variables
-    # We add the timezone to 'defaults' so all scheduled jobs use IST
     application = (
         ApplicationBuilder()
         .token(os.environ.get("BOT_TOKEN")) 
@@ -1099,69 +1173,50 @@ if __name__ == '__main__':
         .build()
     )
 
-    # --- HANDLERS ---
-    # Mirroring (Place first)
-    application.add_handler(MessageHandler(
-        filters.Chat(SOURCE_GROUP_ID) & 
-        (~filters.COMMAND) & 
-        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
-        mirror_messages
-    ))
+    # Handlers
+    application.add_handler(MessageHandler(filters.Chat(SOURCE_GROUP_ID) & (~filters.COMMAND), mirror_messages))
 
-    # Commands
+    # Core Commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("scorecard", scorecard)) # New Command
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CallbackQueryHandler(bc_handler, pattern="^bc_")) # Broadcast Selection
+
+    # Stats & Quiz
     application.add_handler(CommandHandler("randomquiz", send_random_quiz))
     application.add_handler(CommandHandler("myscore", myscore))
     application.add_handler(CommandHandler("mystats", mystats))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
-    application.add_handler(CommandHandler("botstats", bot_stats))
-    application.add_handler(CommandHandler("setcomp", set_group_compliment))
-    application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
     application.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
+    application.add_handler(CommandHandler("botstats", bot_stats))
+    
+    # Admin Controls
     application.add_handler(CommandHandler("addadmin", add_admin))
     application.add_handler(CommandHandler("removeadmin", remove_admin))
     application.add_handler(CommandHandler("adminlist", adminlist))
     application.add_handler(CommandHandler("addquestion", addquestion))
     application.add_handler(CommandHandler("questions", questions_stats))
-    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("autoquiz", autoquiz))
+    application.add_handler(CommandHandler("delallquestions", del_all_questions))
+    
+    # Compliments
+    application.add_handler(CommandHandler("setcomp", set_group_compliment))
+    application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
     application.add_handler(CommandHandler("addcompliment", addcompliment))
     application.add_handler(CommandHandler("listcompliments", listcompliments))
     application.add_handler(CommandHandler("delcompliment", delcompliment))
-    application.add_handler(CommandHandler("footer", footer_cmd))
-    application.add_handler(CommandHandler("autoquiz", autoquiz))
-    application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
+    application.add_handler(CommandHandler("footer", footer_cmd))
 
     # Special Handlers
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
-    # --- JOB QUEUE SETUP ---
+    # Job Queue
     jq = application.job_queue
-
-    # Auto-quiz interval
-    try:
-        with db.get_db() as conn:
-            row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
-            interval_min = int(row[0]) if row else 30
-    except Exception:
-        interval_min = 30 
-
-    jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
-
-    # Nightly Leaderboard scheduled for 9:30 PM (21:30) IST
-    # Because we set the default tzinfo above, we use a simple time(21, 30)
-    jq.run_daily(
-        nightly_leaderboard_job,
-        time=time(hour=22, minute=0), 
-        name="nightly_leaderboard",
-        job_kwargs={
-            'misfire_grace_time': 600, # 10 minute grace period
-            'coalesce': True           
-        }
-    )
+    jq.run_repeating(auto_quiz_job, interval=30 * 60, first=20)
+    jq.run_daily(nightly_leaderboard_job, time=time(hour=22, minute=0))
 
     print("🚀 NEETIQBot is fully secured and Online!")
     application.run_polling(drop_pending_updates=True)
-	
