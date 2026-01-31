@@ -489,64 +489,7 @@ async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------- QUESTION MANAGEMENT ----------------
 
-async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Improved version with better whitespace handling and validation."""
-    if not await is_admin(update.effective_user.id): return
-    
-    content = ""
-    if update.message.document and update.message.document.file_name.endswith('.txt'):
-        file = await context.bot.get_file(update.message.document.file_id)
-        content = (await file.download_as_bytearray()).decode('utf-8')
-    elif update.message.text:
-        content = update.message.text.replace("/addquestion", "").strip()
 
-    if not content:
-        return await update.message.reply_text("❌ Please provide text or a .txt file.")
-
-    # Split by double newlines, then remove truly empty blocks
-    raw_entries = [e.strip() for e in content.split('\n\n') if e.strip()]
-    added_count = 0
-    skipped_count = 0
-
-    with db.get_db() as conn:
-        for entry in raw_entries:
-            # Filter out empty lines within a block (trailing spaces, etc.)
-            lines = [l.strip() for l in entry.split('\n') if l.strip()]
-            
-            if len(lines) >= 7:
-                try:
-                    explanation = lines[-1]
-                    # Normalize answer: trim spaces and make uppercase (e.g., 'a ' -> 'A')
-                    correct = str(lines[-2]).strip().upper()
-                    opt_d = lines[-3]
-                    opt_c = lines[-4]
-                    opt_b = lines[-5]
-                    opt_a = lines[-6]
-                    q_text = "\n".join(lines[:-6]) 
-
-                    # Validation: Ensure 'correct' is a valid option identifier
-                    if correct not in ['1', '2', '3', '4', 'A', 'B', 'C', 'D']:
-                        skipped_count += 1
-                        continue
-
-                    conn.execute(
-                        "INSERT INTO questions (question, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?)",
-                        (q_text, opt_a, opt_b, opt_c, opt_d, correct, explanation)
-                    )
-                    added_count += 1
-                except Exception:
-                    skipped_count += 1
-            else:
-                skipped_count += 1
-
-    await update.message.reply_text(apply_footer(f"📊 *Import Summary:*\n✅ Added: `{added_count}`\n⚠️ Skipped: `{skipped_count}`"))
-
-async def questions_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays total questions currently in the bank."""
-    if not await is_admin(update.effective_user.id): return
-    with db.get_db() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
-    await update.message.reply_text(f"📘 *Total Questions in Database:* `{total}`")
 
 async def del_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
