@@ -1154,8 +1154,7 @@ if __name__ == '__main__':
     # 3. Define Timezone for Kolkata
     ist_timezone = pytz.timezone('Asia/Kolkata')
 
-    # 4. Build Application using Environment Variables
-    # We add the timezone to 'defaults' so all scheduled jobs use IST
+    # 4. Build Application
     application = (
         ApplicationBuilder()
         .token(os.environ.get("BOT_TOKEN")) 
@@ -1164,7 +1163,8 @@ if __name__ == '__main__':
     )
 
     # --- HANDLERS ---
-    # Mirroring (Place first)
+    
+    # A. Mirroring Logic (Highest Priority)
     application.add_handler(MessageHandler(
         filters.Chat(SOURCE_GROUP_ID) & 
         (~filters.COMMAND) & 
@@ -1172,39 +1172,54 @@ if __name__ == '__main__':
         mirror_messages
     ))
 
-    # Commands
+    # B. User & Stats Commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("randomquiz", send_random_quiz))
     application.add_handler(CommandHandler("myscore", myscore))
     application.add_handler(CommandHandler("mystats", mystats))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
-    application.add_handler(CommandHandler("botstats", bot_stats))
-    application.add_handler(CommandHandler("setcomp", set_group_compliment))
-    application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
     application.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
+    application.add_handler(CommandHandler("scorecard", scorecard))
+
+    # C. Admin Control Commands
+    application.add_handler(CommandHandler("botstats", bot_stats))
+    application.add_handler(CommandHandler("questions", questions_stats))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("addadmin", add_admin))
     application.add_handler(CommandHandler("removeadmin", remove_admin))
     application.add_handler(CommandHandler("adminlist", adminlist))
-    application.add_handler(CommandHandler("addquestion", addquestion))
-    application.add_handler(CommandHandler("questions", questions_stats))
-    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("footer", footer_cmd))
+    
+    # D. Subject-Specific Question Adding
+    application.add_handler(CommandHandler("addquestion", add_subject_questions))
+    application.add_handler(CommandHandler("addbioquestions", add_subject_questions))
+    application.add_handler(CommandHandler("addphyquestions", add_subject_questions))
+    application.add_handler(CommandHandler("addchequestions", add_subject_questions))
+
+    # E. Content Management
     application.add_handler(CommandHandler("addcompliment", addcompliment))
     application.add_handler(CommandHandler("listcompliments", listcompliments))
     application.add_handler(CommandHandler("delcompliment", delcompliment))
-    application.add_handler(CommandHandler("footer", footer_cmd))
-    application.add_handler(CommandHandler("autoquiz", autoquiz))
     application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
 
-    # Special Handlers
-    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
+    # F. Group Settings
+    application.add_handler(CommandHandler("setcomp", set_group_compliment))
+    application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
+    application.add_handler(CommandHandler("autoquiz", autoquiz))
+
+    # G. Special Handlers (Polls and Bulk Text Files)
     application.add_handler(PollAnswerHandler(handle_poll_answer))
+    application.add_handler(MessageHandler(
+        filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), 
+        add_subject_questions
+    ))
 
     # --- JOB QUEUE SETUP ---
     jq = application.job_queue
 
-    # Auto-quiz interval
+    # Fetch Interval from Settings
     try:
         with db.get_db() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
@@ -1212,20 +1227,16 @@ if __name__ == '__main__':
     except Exception:
         interval_min = 30 
 
+    # Background Tasks
     jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
-
-    # Nightly Leaderboard scheduled for 9:30 PM (21:30) IST
-    # Because we set the default tzinfo above, we use a simple time(21, 30)
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=0), 
+        time=time(hour=21, minute=0), # 9:00 PM IST
         name="nightly_leaderboard",
-        job_kwargs={
-            'misfire_grace_time': 600, # 10 minute grace period
-            'coalesce': True           
-        }
+        job_kwargs={'misfire_grace_time': 600, 'coalesce': True}
     )
 
     print("🚀 NEETIQBot is fully secured and Online!")
     application.run_polling(drop_pending_updates=True)
+
 	
