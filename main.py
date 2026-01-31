@@ -68,13 +68,27 @@ async def is_admin(user_id: int) -> bool:
     with db.get_db() as conn:
         res = conn.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,)).fetchone()
         return res is not None
-		
+
+# ---------------- REGISTRATION ----------------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
+    
+    # Securely escape the user's name
     safe_name = html.escape(user.first_name)
     
-    # ... [Keep your existing DB logic here] ...
+    # Database Logic
+    with db.get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
+            (user.id, user.username, user.first_name, str(datetime.now()))
+        )
+        if chat.type != 'private':
+            conn.execute(
+                "INSERT OR IGNORE INTO chats (chat_id, type, title, added_at) VALUES (?,?,?,?)",
+                (chat.id, chat.type, chat.title, str(datetime.now()))
+            )
 
     if chat.type == 'private':
         welcome = (
@@ -85,11 +99,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         bot_username = context.bot.username
-        # Updated Button Layout
         buttons = [
             [
                 InlineKeyboardButton("📢 NEETIQBOT Updates", url="https://t.me/NEETIQBOTUPDATES"),
-                InlineKeyboardButton("🛠️ Contact Us ", url="https://t.me/NEETIQsupportbot")
+                InlineKeyboardButton("🛠️ Contact Us", url="https://t.me/NEETIQsupportbot")
             ],
             [InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_username}?startgroup=true")]
         ]
@@ -100,9 +113,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
     else:
-        # ... [Keep your existing group logic here] ...
+        # Correctly indented group logic
+        safe_title = html.escape(chat.title) if chat.title else "this group"
+        group_msg = f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\nPreparing <b>{safe_title}</b> for upcoming quizzes."
+        await update.message.reply_text(apply_footer(group_msg), parse_mode="HTML")
 
-		
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "📖 <b>NEETIQBot Command List</b>\n\n"
@@ -118,8 +133,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/groupleaderboard</code> - Group specific rankings"
     )
     
-    # Support button for Help menu
-    help_buttons = [[InlineKeyboardButton("⚒️NEETIQBOT SUPPORT", url="https://t.me/NEETIQsupportbot")]]
+    help_buttons = [[InlineKeyboardButton("⚒️ NEETIQBOT SUPPORT", url="https://t.me/NEETIQsupportbot")]]
     
     await update.message.reply_text(
         apply_footer(help_text), 
@@ -127,6 +141,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
 	)
 	
+
 # ---------------- QUIZ SYSTEM ----------------
 
 async def send_random_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
