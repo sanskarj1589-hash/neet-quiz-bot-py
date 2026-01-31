@@ -488,50 +488,58 @@ async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: `/removeadmin <user_id>`")
 
 # ---------------- QUESTION MANAGEMENT ----------------
-
-async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Improved version with better whitespace handling and validation."""
+async def add_subject_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Modified version to handle Bio, Phy, and Che subjects separately."""
     if not await is_admin(update.effective_user.id): return
     
+    # 1. Determine Subject from the command used
+    cmd = update.effective_message.text.split()[0].lower() if update.effective_message.text else ""
+    if "bio" in cmd: subject = "Bio"
+    elif "phy" in cmd: subject = "Phy"
+    elif "che" in cmd: subject = "Che"
+    else: subject = "General"
+
     content = ""
+    # Handle .txt file upload
     if update.message.document and update.message.document.file_name.endswith('.txt'):
         file = await context.bot.get_file(update.message.document.file_id)
         content = (await file.download_as_bytearray()).decode('utf-8')
+    # Handle direct text
     elif update.message.text:
-        content = update.message.text.replace("/addquestion", "").strip()
+        # Remove the command (e.g., /addbioquestions) from the text
+        content = update.message.text.split(maxsplit=1)[1] if len(update.message.text.split()) > 1 else ""
 
     if not content:
-        return await update.message.reply_text("❌ Please provide text or a .txt file.")
+        return await update.message.reply_text(f"❌ Please provide text or a .txt file for {subject}.")
 
-    # Split by double newlines, then remove truly empty blocks
+    # Split by double newlines to separate different questions
     raw_entries = [e.strip() for e in content.split('\n\n') if e.strip()]
     added_count = 0
     skipped_count = 0
 
     with db.get_db() as conn:
         for entry in raw_entries:
-            # Filter out empty lines within a block (trailing spaces, etc.)
             lines = [l.strip() for l in entry.split('\n') if l.strip()]
             
             if len(lines) >= 7:
                 try:
                     explanation = lines[-1]
-                    # Normalize answer: trim spaces and make uppercase (e.g., 'a ' -> 'A')
                     correct = str(lines[-2]).strip().upper()
                     opt_d = lines[-3]
                     opt_c = lines[-4]
                     opt_b = lines[-5]
                     opt_a = lines[-6]
+                    # Join remaining lines to keep question formatting (e.g., equations or lists)
                     q_text = "\n".join(lines[:-6]) 
 
-                    # Validation: Ensure 'correct' is a valid option identifier
                     if correct not in ['1', '2', '3', '4', 'A', 'B', 'C', 'D']:
                         skipped_count += 1
                         continue
 
+                    # UPDATED: Added 'subject' column to the insertion
                     conn.execute(
-                        "INSERT INTO questions (question, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?)",
-                        (q_text, opt_a, opt_b, opt_c, opt_d, correct, explanation)
+                        "INSERT INTO questions (question, a, b, c, d, correct, explanation, subject) VALUES (?,?,?,?,?,?,?,?)",
+                        (q_text, opt_a, opt_b, opt_c, opt_d, correct, explanation, subject)
                     )
                     added_count += 1
                 except Exception:
@@ -539,14 +547,32 @@ async def addquestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 skipped_count += 1
 
-    await update.message.reply_text(apply_footer(f"📊 *Import Summary:*\n✅ Added: `{added_count}`\n⚠️ Skipped: `{skipped_count}`"))
-
+    await update.message.reply_text(
+        apply_footer(f"📊 *{subject} Import Summary:*\n✅ Added: `{added_count}`\n⚠️ Skipped: `{skipped_count}`")
+					)
+	
 async def questions_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays total questions currently in the bank."""
+    """Displays remaining questions breakdown by subject."""
     if not await is_admin(update.effective_user.id): return
+    
     with db.get_db() as conn:
+        # Fetching counts for each category
         total = conn.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
-    await update.message.reply_text(f"📘 *Total Questions in Database:* `{total}`")
+        bio = conn.execute("SELECT COUNT(*) FROM questions WHERE subject = 'Bio'").fetchone()[0]
+        phy = conn.execute("SELECT COUNT(*) FROM questions WHERE subject = 'Phy'").fetchone()[0]
+        che = conn.execute("SELECT COUNT(*) FROM questions WHERE subject = 'Che'").fetchone()[0]
+
+    # Matching your requested format
+    response = (
+        "📊 *Remaining questions*\n"
+        f"🔹 *Total:* `{total}`\n\n"
+        f"🧬 *Biology:* `{bio}`\n"
+        f"⚡ *Physics:* `{phy}`\n"
+        f"🧪 *Chemistry:* `{che}`"
+    )
+    
+    await update.message.reply_text(response, parse_mode="Markdown")
+	
 
 async def del_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
