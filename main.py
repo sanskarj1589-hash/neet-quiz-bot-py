@@ -14,8 +14,10 @@ from telegram.ext import (
     PollAnswerHandler,
     MessageHandler,
     filters,
-    Defaults
+    Defaults,
+    CallbackQueryHandler  # <--- Make sure this is here
 )
+
 import database as db
 
 
@@ -675,8 +677,6 @@ async def delallcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ *Error:* {e}")
 
-
-
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiates broadcast by asking for target audience."""
     if not await is_admin(update.effective_user.id):
@@ -762,66 +762,30 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 	
 
 async def scorecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays a detailed, organized user scorecard in DMs only."""
-    user = update.effective_user
-    chat = update.effective_chat
-
-    # 1. Private Chat Check
-    if chat.type != 'private':
-        return await update.message.reply_text(
-            "❌ <b>Private Feature Only</b>\n"
-            "To view your personal scorecard, please message me directly in DM.",
-            parse_mode="HTML"
-        )
-
-    user_id = user.id
+    if update.effective_chat.type != 'private':
+        return await update.message.reply_text("❌ Please use this command in DM.")
     
-    # 2. Fetch Data
+    user_id = update.effective_user.id
     with db.get_db() as conn:
-        # User details
-        user_data = conn.execute(
-            "SELECT joined_at FROM users WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        
-        # Performance stats
-        stats = conn.execute(
-            "SELECT attempted, correct, score FROM stats WHERE user_id = ?", (user_id,)
-        ).fetchone()
+        u_data = conn.execute("SELECT joined_at FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        stats = conn.execute("SELECT attempted, correct, score FROM stats WHERE user_id = ?", (user_id,)).fetchone()
 
-    # Data Parsing
-    joined_date = user_data[0][:10] if user_data else "N/A"
-    attempted = stats[0] if stats else 0
-    correct = stats[1] if stats else 0
-    total_score = stats[2] if stats else 0
-    
-    # Calculations
-    wrong = attempted - correct
+    attempted, correct, score = (stats[0], stats[1], stats[2]) if stats else (0, 0, 0)
     accuracy = (correct / attempted * 100) if attempted > 0 else 0
-
-    # 3. Formatting the Output
     divider = "<b>━━━━━━━━━━━━━━━━━━━━━━</b>"
     
-    card_text = (
-        f"🏆 <b>NEETIQ PROGRESS REPORT</b>\n"
-        f"{divider}\n"
-        f"👤 <b>STUDENT:</b> {html.escape(user.first_name)}\n"
-        f"🆔 <b>UID:</b> <code>{user_id}</code>\n"
-        f"📅 <b>JOINED:</b> <code>{joined_date}</code>\n\n"
-        f"📊 <b>PERFORMANCE STATS</b>\n"
+    card = (
+        f"🏆 <b>NEETIQ PROGRESS REPORT</b>\n{divider}\n"
+        f"👤 <b>STUDENT:</b> {html.escape(update.effective_user.first_name)}\n"
+        f"📅 <b>JOINED:</b> <code>{u_data[0][:10] if u_data else 'N/A'}</code>\n\n"
+        f"📊 <b>PERFORMANCE</b>\n"
         f"┣ 📝 <b>Attempted:</b> <code>{attempted}</code>\n"
         f"┣ ✅ <b>Correct:</b> <code>{correct}</code>\n"
-        f"┣ ❌ <b>Incorrect:</b> <code>{wrong}</code>\n"
         f"┗ 🎯 <b>Accuracy:</b> <code>{accuracy:.1f}%</code>\n\n"
-        f"💰 <b>TOTAL POINTS:</b> <code>{total_score}</code>\n"
-        f"{divider}\n"
-        f"<i>Keep grinding for your medical dream!</i>"
+        f"💰 <b>TOTAL POINTS:</b> <code>{score}</code>\n{divider}"
     )
-
-    await update.message.reply_text(
-        apply_footer(card_text), 
-        parse_mode="HTML"
-	)
-
+    await update.message.reply_text(apply_footer(card), parse_mode="HTML")
+	
 
 # ---------------- SETTINGS (FOOTER & AUTOQUIZ) ----------------
 
@@ -1216,7 +1180,7 @@ if __name__ == '__main__':
     # Job Queue
     jq = application.job_queue
     jq.run_repeating(auto_quiz_job, interval=30 * 60, first=20)
-    jq.run_daily(nightly_leaderboard_job, time=time(hour=22, minute=0))
+    jq.run_daily(nightly_leaderboard_job, time=time(hour=21, minute=0))
 
     print("🚀 NEETIQBot is fully secured and Online!")
     application.run_polling(drop_pending_updates=True)
