@@ -117,25 +117,42 @@ def init_db():
 
 def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
     with get_db() as conn:
+        # 1. Update user identity
         conn.execute("""
-            INSERT INTO users (user_id, username, first_name) 
-            VALUES (?, ?, ?)
+            INSERT INTO users (user_id, username, first_name, joined_at) 
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET 
-                username = excluded.username, first_name = excluded.first_name
-        """, (user_id, username, first_name))
+                username = excluded.username, 
+                first_name = excluded.first_name
+        """, (user_id, username, first_name, datetime.now().isoformat()))
 
         score_change = 4 if is_correct else -1
         correct_inc = 1 if is_correct else 0
+        
+        # Streak Logic: Increment if correct, reset to 0 if wrong
+        new_streak_val = 1 if is_correct else 0
 
-        conn.execute("""
-            INSERT INTO stats (user_id, attempted, correct, score) 
-            VALUES (?, 1, ?, ?)
+        # 2. Update Global Stats (including streak logic and negative score support)
+        conn.execute(f"""
+            INSERT INTO stats (user_id, attempted, correct, score, current_streak, max_streak, last_date) 
+            VALUES (?, 1, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET 
                 attempted = attempted + 1,
                 correct = correct + ?,
-                score = score + ?
-        """, (user_id, correct_inc, score_change, correct_inc, score_change))
+                score = score + ?,
+                max_streak = CASE 
+                    WHEN {1 if is_correct else 0} = 1 THEN MAX(max_streak, current_streak + 1) 
+                    ELSE max_streak 
+                END,
+                current_streak = CASE 
+                    WHEN {1 if is_correct else 0} = 1 THEN current_streak + 1 
+                    ELSE 0 
+                END,
+                last_date = ?
+        """, (user_id, correct_inc, score_change, new_streak_val, new_streak_val, datetime.now().isoformat(),
+              correct_inc, score_change, datetime.now().isoformat()))
 
+        # 3. Update Group Stats
         if chat_id:
             conn.execute("""
                 INSERT INTO group_stats (user_id, chat_id, attempted, correct, score) 
@@ -145,6 +162,7 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
                     correct = correct + ?,
                     score = score + ?
             """, (user_id, chat_id, correct_inc, score_change, correct_inc, score_change))
+            
 
 def get_leaderboard_data(chat_id=None, limit=25):
     with get_db() as conn:
