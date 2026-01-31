@@ -40,29 +40,98 @@ def get_db():
     finally:
         client.close()
 
+
 # --- INITIALIZATION & MIGRATION ---
 def init_db():
     with get_db() as conn:
-        # Create core tables if they don't exist
-        conn.execute("CREATE TABLE IF NOT EXISTS active_polls (poll_id TEXT PRIMARY KEY, chat_id INTEGER, correct_option_id INTEGER)")
-        conn.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, joined_at TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, type TEXT, title TEXT, added_at TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS questions (poll_id TEXT PRIMARY KEY, message_id INTEGER, chat_id INTEGER)")
-        conn.execute("CREATE TABLE IF NOT EXISTS stats (user_id INTEGER PRIMARY KEY, score INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, attempted INTEGER DEFAULT 0)")
-        conn.execute("CREATE TABLE IF NOT EXISTS group_stats (user_id INTEGER, chat_id INTEGER, score INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, attempted INTEGER DEFAULT 0, PRIMARY KEY (user_id, chat_id))")
-        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        # 1. Create Core Tables with correct structures
+        
+        # Tracks the details of every poll sent
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                poll_id TEXT UNIQUE,
+                message_id INTEGER,
+                chat_id INTEGER,
+                question TEXT,
+                subject TEXT DEFAULT 'General',
+                correct_option_id INTEGER
+            )
+        """)
 
-        # Migration: Add new columns if missing
+        # Tracks currently active polls for answer validation
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS active_polls (
+                poll_id TEXT PRIMARY KEY, 
+                chat_id INTEGER, 
+                correct_option_id INTEGER
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY, 
+                username TEXT, 
+                first_name TEXT, 
+                joined_at TEXT,
+                source TEXT DEFAULT 'Group',
+                status TEXT DEFAULT 'active'
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chats (
+                chat_id INTEGER PRIMARY KEY, 
+                type TEXT, 
+                title TEXT, 
+                added_at TEXT,
+                status TEXT DEFAULT 'active'
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS stats (
+                user_id INTEGER PRIMARY KEY, 
+                score INTEGER DEFAULT 0, 
+                correct INTEGER DEFAULT 0, 
+                attempted INTEGER DEFAULT 0,
+                current_streak INTEGER DEFAULT 0,
+                max_streak INTEGER DEFAULT 0,
+                bio_att INTEGER DEFAULT 0, bio_cor INTEGER DEFAULT 0,
+                phy_att INTEGER DEFAULT 0, phy_cor INTEGER DEFAULT 0,
+                che_att INTEGER DEFAULT 0, che_cor INTEGER DEFAULT 0
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_stats (
+                user_id INTEGER, 
+                chat_id INTEGER, 
+                score INTEGER DEFAULT 0, 
+                correct INTEGER DEFAULT 0, 
+                attempted INTEGER DEFAULT 0,
+                bio_att INTEGER DEFAULT 0, bio_cor INTEGER DEFAULT 0,
+                phy_att INTEGER DEFAULT 0, phy_cor INTEGER DEFAULT 0,
+                che_att INTEGER DEFAULT 0, che_cor INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, chat_id)
+            )
+        """)
+
+        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS compliments (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, text TEXT)")
+
+        # 2. Migration: Dynamic Column Addition (Safe for existing DBs)
         migrations = [
             ("users", "source TEXT DEFAULT 'Group'"),
             ("users", "status TEXT DEFAULT 'active'"),
             ("chats", "status TEXT DEFAULT 'active'"),
             ("questions", "subject TEXT DEFAULT 'General'"),
-            # Subject Tracking (Lifetime)
+            ("questions", "correct_option_id INTEGER"),
+            ("stats", "current_streak INTEGER DEFAULT 0"),
+            ("stats", "max_streak INTEGER DEFAULT 0"),
             ("stats", "bio_att INTEGER DEFAULT 0"), ("stats", "bio_cor INTEGER DEFAULT 0"),
             ("stats", "phy_att INTEGER DEFAULT 0"), ("stats", "phy_cor INTEGER DEFAULT 0"),
             ("stats", "che_att INTEGER DEFAULT 0"), ("stats", "che_cor INTEGER DEFAULT 0"),
-            # Subject Tracking (Daily/Group)
             ("group_stats", "bio_att INTEGER DEFAULT 0"), ("group_stats", "bio_cor INTEGER DEFAULT 0"),
             ("group_stats", "phy_att INTEGER DEFAULT 0"), ("group_stats", "phy_cor INTEGER DEFAULT 0"),
             ("group_stats", "che_att INTEGER DEFAULT 0"), ("group_stats", "che_cor INTEGER DEFAULT 0")
@@ -74,9 +143,14 @@ def init_db():
             except:
                 pass # Already exists
 
-        # Default Settings Initialization
+        # 3. Initialize Default Settings
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_quiz', 'on')")
+        conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('autoquiz_interval', '30')")
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('total_sent', '0')")
+        
+    print("✅ Database Verified and Synchronized with Main.py logic.")
+    
+
 
 # --- QUESTION MANAGEMENT ---
 def add_question(poll_id, message_id, chat_id, subject='General'):
