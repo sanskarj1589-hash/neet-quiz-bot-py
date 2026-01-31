@@ -47,13 +47,6 @@ logger = logging.getLogger(__name__)
 # Note: Using standard Markdown for simplicity to avoid escape errors
 defaults = Defaults(parse_mode="Markdown")
 
-
-async def on_startup(application):
-    """Runs database initialization within the async loop."""
-    print("🔄 Initializing Database...")
-    db.init_db()
-    print("✅ Database Ready.")
-
 # ---------------- HELPERS ----------------
 MAX_MESSAGE_LENGTH = 4000  # Safe limit
 
@@ -1132,3 +1125,122 @@ import os
 from threading import Thread
 from flask import Flask
 
+
+# --- STARTUP HOOK ---
+async def on_startup(application):
+    """
+    Initializes the database within the running event loop 
+    to prevent 'RuntimeError: no running event loop'.
+    """
+    print("🔄 Initializing Database...")
+    db.init_db()
+    print("✅ Database Synchronization Complete.")
+
+# --- KEEP-ALIVE SERVER FOR RENDER ---
+flask_app = Flask('')
+
+@flask_app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    # Render provides PORT environment variable automatically
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
+# --- MAIN EXECUTION ---
+if __name__ == '__main__':
+    # 1. Start the Keep-Alive Web Server (Background thread)
+    print("🌐 Starting Keep-Alive server...")
+    keep_alive()
+
+    # 2. Define Timezone for Kolkata
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+
+    # 3. Build Application
+    # We use post_init to call db.init_db inside the async loop
+    application = (
+        ApplicationBuilder()
+        .token(os.environ.get("BOT_TOKEN")) 
+        .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
+        .post_init(on_startup)  # <--- CRITICAL FIX
+        .build()
+    )
+
+    # --- HANDLERS ---
+    
+    # A. Mirroring Logic (Highest Priority)
+    application.add_handler(MessageHandler(
+        filters.Chat(SOURCE_GROUP_ID) & 
+        (~filters.COMMAND) & 
+        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
+        mirror_messages
+    ))
+
+    # B. User & Stats Commands
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("randomquiz", send_random_quiz))
+    application.add_handler(CommandHandler("myscore", myscore))
+    application.add_handler(CommandHandler("mystats", mystats))
+    application.add_handler(CommandHandler("leaderboard", leaderboard))
+    application.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
+    application.add_handler(CommandHandler("scorecard", scorecard))
+
+    # C. Admin Control Commands
+    application.add_handler(CommandHandler("botstats", bot_stats))
+    application.add_handler(CommandHandler("questions", questions_stats))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("addadmin", add_admin))
+    application.add_handler(CommandHandler("removeadmin", remove_admin))
+    application.add_handler(CommandHandler("adminlist", adminlist))
+    application.add_handler(CommandHandler("footer", footer_cmd))
+    
+    # D. Subject-Specific Question Adding
+    application.add_handler(CommandHandler("addquestion", add_subject_questions))
+    application.add_handler(CommandHandler("addbioquestions", add_subject_questions))
+    application.add_handler(CommandHandler("addphyquestions", add_subject_questions))
+    application.add_handler(CommandHandler("addchequestions", add_subject_questions))
+
+    # E. Content Management
+    application.add_handler(CommandHandler("addcompliment", addcompliment))
+    application.add_handler(CommandHandler("listcompliments", listcompliments))
+    application.add_handler(CommandHandler("delcompliment", delcompliment))
+    application.add_handler(CommandHandler("delallquestions", del_all_questions))
+    application.add_handler(CommandHandler("delallcompliments", delallcompliments))
+
+    # F. Group Settings
+    application.add_handler(CommandHandler("setcomp", set_group_compliment))
+    application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
+    application.add_handler(CommandHandler("autoquiz", autoquiz))
+
+    # G. Special Handlers (Polls and Bulk Text Files)
+    application.add_handler(PollAnswerHandler(handle_poll_answer))
+    application.add_handler(MessageHandler(
+        filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), 
+        add_subject_questions
+    ))
+
+    # --- JOB QUEUE SETUP ---
+    jq = application.job_queue
+
+    # Fetch Interval from Settings (We use a default here to avoid sync issues during first start)
+    interval_min = 30 
+
+    # Background Tasks
+    jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
+    jq.run_daily(
+        nightly_leaderboard_job,
+        time=time(hour=21, minute=0), # 9:00 PM IST
+        name="nightly_leaderboard",
+        job_kwargs={'misfire_grace_time': 600, 'coalesce': True}
+    )
+
+    print("🚀 NEETIQBot is fully secured and Online!")
+    application.run_polling(drop_pending_updates=True)
+	
