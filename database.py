@@ -163,7 +163,46 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
                     score = score + ?
             """, (user_id, chat_id, correct_inc, score_change, correct_inc, score_change))
             
-
+def get_leaderboard_data(chat_id=None, limit=25):
+    with get_db() as conn:
+        # Improved name logic to handle missing users gracefully
+        name_sql = """
+            COALESCE(
+                CASE WHEN u.username IS NOT NULL AND u.username != '' THEN '@' || u.username ELSE NULL END,
+                u.first_name,
+                'Participant ' || stats_table.user_id
+            ) AS display_name
+        """
+        
+        if chat_id:
+            # Pulls group scores but joins with global stats to show the user's Max Streak
+            query = f"""
+                SELECT 
+                    {name_sql.replace('stats_table', 'gs')}, 
+                    gs.attempted, gs.correct, gs.score,
+                    s.current_streak, s.max_streak
+                FROM group_stats gs 
+                LEFT JOIN users u ON gs.user_id = u.user_id 
+                LEFT JOIN stats s ON gs.user_id = s.user_id
+                WHERE gs.chat_id = ? 
+                ORDER BY gs.score DESC 
+                LIMIT ?
+            """
+            return conn.execute(query, (chat_id, limit)).fetchall()
+        else:
+            # Global leaderboard showing all stats including streaks
+            query = f"""
+                SELECT 
+                    {name_sql.replace('stats_table', 's')}, 
+                    s.attempted, s.correct, s.score, 
+                    s.current_streak, s.max_streak 
+                FROM stats s 
+                LEFT JOIN users u ON s.user_id = u.user_id 
+                ORDER BY s.score DESC 
+                LIMIT ?
+            """
+            return conn.execute(query, (limit,)).fetchall()
+            
 
 def delete_all_compliments():
     with get_db() as conn:
