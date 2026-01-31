@@ -215,6 +215,32 @@ def get_admin_bot_stats():
         stats['total_groups'] = conn.execute("SELECT COUNT(*) as c FROM chats WHERE type != 'private'").fetchone()['c']
         return stats
 
+def get_leaderboard_data(chat_id=None, limit=10):
+    with get_db() as conn:
+        if chat_id:
+            return conn.execute("""
+                SELECT u.first_name, gs.user_id, gs.chat_id, gs.score 
+                FROM group_stats gs 
+                JOIN users u ON gs.user_id = u.user_id 
+                WHERE gs.chat_id = ? ORDER BY gs.score DESC LIMIT ?
+            """, (chat_id, limit)).fetchall()
+        return conn.execute("""
+            SELECT u.first_name, s.user_id, NULL, s.score 
+            FROM stats s 
+            JOIN users u ON s.user_id = u.user_id 
+            ORDER BY s.score DESC LIMIT ?
+        """, (limit,)).fetchall()
+
+
+def delete_all_questions():
+    with get_db() as conn:
+        conn.execute("DELETE FROM questions")
+
+def delete_all_compliments():
+    with get_db() as conn:
+        conn.execute("DELETE FROM compliments")
+        
+
 # --- USER REGISTRATION ---
 def register_user(user_id, username, first_name, source='Group'):
     with get_db() as conn:
