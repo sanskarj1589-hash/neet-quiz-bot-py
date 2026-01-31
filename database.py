@@ -61,12 +61,19 @@ def get_db():
 def init_db():
     """Initializes tables on Turso Cloud with Subject Tracking."""
     with get_db() as conn:
-        # Questions Bank - Added 'subject' column
+        # Questions Bank
         conn.execute("""CREATE TABLE IF NOT EXISTS questions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             question TEXT, a TEXT, b TEXT, c TEXT, d TEXT, 
             correct TEXT, explanation TEXT,
             subject TEXT DEFAULT 'General')""")
+
+        # UPDATED: Poll Tracking - Added 'subject' to track which category the poll belongs to
+        conn.execute("""CREATE TABLE IF NOT EXISTS active_polls (
+            poll_id TEXT PRIMARY KEY, 
+            chat_id INTEGER, 
+            correct_option_id INTEGER,
+            subject TEXT)""")
 
         # User & Group Registration
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
@@ -78,7 +85,7 @@ def init_db():
 
         conn.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, added_at TEXT)")
 
-        # Stats & Scoring - Added subject-specific tracking columns
+        # Stats & Scoring
         conn.execute("""CREATE TABLE IF NOT EXISTS stats (
             user_id INTEGER PRIMARY KEY, 
             attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, score INTEGER DEFAULT 0,
@@ -87,7 +94,7 @@ def init_db():
             che_att INTEGER DEFAULT 0, che_cor INTEGER DEFAULT 0,
             current_streak INTEGER DEFAULT 0, max_streak INTEGER DEFAULT 0, last_date TEXT)""")
 
-        # Group Stats - Added subject-specific tracking columns
+        # Group Stats
         conn.execute("""CREATE TABLE IF NOT EXISTS group_stats (
             chat_id INTEGER, user_id INTEGER, score INTEGER DEFAULT 0, 
             attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0,
@@ -109,7 +116,8 @@ def init_db():
         ]
         conn.executemany("INSERT OR IGNORE INTO settings VALUES (?,?)", defaults)
         
-    print("✅ Turso Cloud Database Initialized with Subject Support!")
+    print("✅ Turso Cloud Database Initialized with full Subject Support!")
+    
         
 def update_user_stats(user_id, chat_id, is_correct, subject=None, username=None, first_name=None):
     """Updates global and group stats with subject-specific tracking."""
