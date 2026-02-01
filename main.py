@@ -349,23 +349,57 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ---------------- PERFORMANCE STATS ----------------
 
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Provides a quick summary of the user's current score."""
+    """Provides a detailed summary of the user's current score and rank."""
     user = update.effective_user
-    with db.get_db() as conn:
-        s = conn.execute("SELECT * FROM stats WHERE user_id = ?", (user.id,)).fetchone()
+    chat = update.effective_chat
     
-    if not s:
-        return await update.message.reply_text("❌ *No data found.* Participate in a quiz to generate stats!")
+    with db.get_db() as conn:
+        # Fetch user stats
+        s = conn.execute("SELECT * FROM stats WHERE user_id = ?", (user.id,)).fetchone()
+        
+        if not s:
+            return await update.message.reply_text("❌ <b>No data found.</b> Participate in a quiz to generate stats!", parse_mode="HTML")
+
+        # Calculate Global Rank
+        g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (s['score'],)).fetchone()
+        global_rank = g_rank_row[0]
+
+        # Calculate Group Rank (if in a group)
+        group_rank = "N/A"
+        if chat.type != 'private':
+            gr_row = conn.execute("SELECT COUNT(*) + 1 FROM group_stats WHERE chat_id = ? AND score > ?", 
+                                 (chat.id, s['score'])).fetchone()
+            group_rank = gr_row[0] if gr_row else "N/A"
+
+    # Calculations
+    attempted = s['attempted']
+    correct = s['correct']
+    accuracy = (correct / attempted * 100) if attempted > 0 else 0
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    safe_name = html.escape(user.first_name)
 
     text = (
-        "📊 *Your Score Summary*\n\n"
-        f"Total Attempted: `{s['attempted']}`\n"
-        f"Correct Answers: `{s['correct']}`\n"
-        f"Incorrect Answers: `{s['attempted'] - s['correct']}`\n"
-        f"Current Score: `{s['score']}`"
+        f"🏆 <b>{safe_name}'s SCORECARD</b>\n"
+        f"{divider}\n"
+        f"📊 <b>POSITION DATA</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 🌍 Global rank: #{global_rank}</code>\n"
+        f"<code>│ 👥 Group rank : #{group_rank}</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"📈 <b>ACCURACY TRACKER</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 📝 Attempted : {attempted}</code>\n"
+        f"<code>│ ✅ Correct   : {correct}</code>\n"
+        f"<code>│ 🎯 Accuracy  : {accuracy:.1f}%</code>\n"
+        f"<code>╰────────────────────</code>\n"
+        f"{divider}"
     )
-    await update.message.reply_text(apply_footer(text))
 
+    await update.message.reply_text(
+        apply_footer(text), 
+        parse_mode="HTML"
+	)
+	
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the broadcast flow and captures exact formatting."""
