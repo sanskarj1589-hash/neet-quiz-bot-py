@@ -143,6 +143,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     
+    # --- Deep-Linking Logic (start=stats) ---
+    if chat.type == 'private' and context.args and context.args[0] == "stats":
+        return await mystats(update, context)
+
     # Securely escape the user's name
     safe_name = html.escape(user.first_name)
     
@@ -167,8 +171,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         bot_username = context.bot.username
-        
-        # Each button is now in its own inner list [] to force a vertical stack
         buttons = [
             [InlineKeyboardButton("📢 NEETIQBOT Updates", url="https://t.me/NEETIQBOTUPDATES")],
             [InlineKeyboardButton("🛠️ Contact Us", url="https://t.me/NEETIQsupportbot")],
@@ -181,10 +183,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
     else:
-        # Correctly indented group logic
         safe_title = html.escape(chat.title) if chat.title else "this group"
         group_msg = f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\nPreparing <b>{safe_title}</b> for upcoming quizzes."
         await update.message.reply_text(apply_footer(group_msg), parse_mode="HTML")
+				
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -364,88 +366,6 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(apply_footer(text))
 
-async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat = update.effective_chat
-    chat_id = chat.id
-
-    # 1. Private Chat Restriction
-    if chat.type != 'private':
-        return await update.message.reply_text(
-            "❌ <b>Personal Stats</b> can only be viewed in my private DM for privacy.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📊 View My Stats", url=f"https://t.me/{context.bot.username}?start=stats")]
-            ]),
-            parse_mode="HTML"
-        )
-
-    # 2. Force Join Check
-    if not await check_force_join(user.id, context):
-        buttons = [
-            [InlineKeyboardButton("📢 Channel 1", url="https://t.me/NEETIQBOTUPDATES")],
-            [InlineKeyboardButton("📢 Channel 2", url="https://t.me/SANSKAR279")],
-            [InlineKeyboardButton("🔄 Verify access", callback_data="check_join")]
-        ]
-        return await update.message.reply_text(
-            "⚠️ <b>Access Denied!</b>\n\nYou must join our both channels to view your detailed performance profile.",
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="HTML"
-        )
-
-    # 3. Data Fetching Logic
-    with db.get_db() as conn:
-        s = conn.execute("SELECT user_id, attempted, correct, score, current_streak, max_streak FROM stats WHERE user_id = ?", (user.id,)).fetchone()
-        
-        if not s:
-            return await update.message.reply_text("❌ <b>No statistics found!</b>\nAnswer some quizzes to generate your profile.", parse_mode="HTML")
-
-        attempted, correct, score, c_streak, m_streak = s[1], s[2], s[3], s[4], s[5]
-
-        # Calculate Global Rank
-        g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (score,)).fetchone()
-        global_rank = g_rank_row[0]
-
-    # 4. Profile Construction
-    accuracy = (correct / attempted * 100) if attempted > 0 else 0
-    wrong = attempted - correct
-    xp = max(0, (correct * 4) - (wrong * 1))
-
-    if xp > 1000: rank_title = "🏥 AIIMS Dean"
-    elif xp > 500: rank_title = "👨‍⚕️ Senior Consultant"
-    elif xp > 300: rank_title = "💉 Resident Doctor"
-    elif xp > 150: rank_title = "🩺 Gold Intern"
-    elif xp > 50:  rank_title = "📚 Elite Aspirant"
-    else:          rank_title = "🧬 Medical Student"
-
-    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
-    safe_name = html.escape(user.first_name)
-
-    text = (
-        f"🪪 <b>NEETIQ USER PROFILE</b>\n"
-        f"{divider}\n"
-        f"👤 <b>NAME</b> : <code>{safe_name}</code>\n"
-        f"🏅 <b>RANK</b> : <b>{rank_title}</b>\n"
-        f"{divider}\n"
-        f"📊 <b>POSITION DATA</b>\n"
-        f"<code>╭────────────────────</code>\n"
-        f"<code>│ 🏆 Global  : #{global_rank}</code>\n"
-        f"<code>│ 🧬 Total XP: {xp:,}</code>\n"
-        f"<code>╰────────────────────</code>\n\n"
-        f"📈 <b>ACCURACY TRACKER</b>\n"
-        f"<code>┌── Attempted : {attempted}</code>\n"
-        f"<code>├── Correct   : {correct}</code>\n"
-        f"<code>└── Precision : {accuracy:.1f}%</code>\n\n"
-        f"🔥 <b>STREAK MONITOR</b>\n"
-        f"<code>┌── Current   : {c_streak}</code>\n"
-        f"<code>└── Best      : {m_streak}</code>\n"
-        f"{divider}"
-    )
-
-    await update.message.reply_text(
-        apply_footer(text), 
-        parse_mode="HTML",
-        disable_web_page_preview=True
-	)
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the broadcast flow and captures exact formatting."""
@@ -485,6 +405,107 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode="HTML"
 	) 
+
+async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    query = update.callback_query  # Check if triggered by button
+
+    # 1. Private Chat Restriction
+    if chat.type != 'private':
+        return await update.message.reply_text(
+            "❌ <b>Personal Stats</b> can only be viewed in my private DM for privacy.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 View My Stats", url=f"https://t.me/{context.bot.username}?start=stats")]
+            ]),
+            parse_mode="HTML"
+        )
+
+    # 2. Force Join Check
+    is_joined = await check_force_join(user.id, context)
+    
+    if not is_joined:
+        if query:
+            # Show pop-up alert if still not joined
+            await query.answer("⚠️ You haven't joined both channels yet!", show_alert=True)
+        
+        buttons = [
+            [InlineKeyboardButton("📢 Channel 1", url="https://t.me/NEETIQBOTUPDATES")],
+            [InlineKeyboardButton("📢 Channel 2", url="https://t.me/SANSKAR279")],
+            [InlineKeyboardButton("🔄 Verify access", callback_data="check_join")]
+        ]
+        text = "⚠️ <b>Access Denied!</b>\n\nYou must join our both channels to view your detailed performance profile."
+        
+        if query:
+            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+
+    # 3. SUCCESS: Handle Callback (Show Alert & Delete Menu)
+    if query:
+        await query.answer("✅ Access Verified!", show_alert=False)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+    # 4. Data Fetching Logic
+    with db.get_db() as conn:
+        s = conn.execute("SELECT user_id, attempted, correct, score, current_streak, max_streak FROM stats WHERE user_id = ?", (user.id,)).fetchone()
+        
+        if not s:
+            msg = "❌ <b>No statistics found!</b>\nAnswer some quizzes to generate your profile."
+            return await context.bot.send_message(chat_id=user.id, text=msg, parse_mode="HTML")
+
+        attempted, correct, score, c_streak, m_streak = s[1], s[2], s[3], s[4], s[5]
+        g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (score,)).fetchone()
+        global_rank = g_rank_row[0]
+
+    # 5. Profile Construction
+    accuracy = (correct / attempted * 100) if attempted > 0 else 0
+    wrong = attempted - correct
+    xp = max(0, (correct * 4) - (wrong * 1))
+
+    if xp > 1000: rank_title = "🏥 AIIMS Dean"
+    elif xp > 500: rank_title = "👨‍⚕️ Senior Consultant"
+    elif xp > 300: rank_title = "💉 Resident Doctor"
+    elif xp > 150: rank_title = "🩺 Gold Intern"
+    elif xp > 50:  rank_title = "📚 Elite Aspirant"
+    else:          rank_title = "🧬 Medical Student"
+
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    safe_name = html.escape(user.first_name)
+
+    text = (
+        f"🪪 <b>NEETIQ USER PROFILE</b>\n"
+        f"{divider}\n"
+        f"👤 <b>NAME</b> : <code>{safe_name}</code>\n"
+        f"🏅 <b>RANK</b> : <b>{rank_title}</b>\n"
+        f"{divider}\n"
+        f"📊 <b>POSITION DATA</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 🏆 Global  : #{global_rank}</code>\n"
+        f"<code>│ 🧬 Total XP: {xp:,}</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"📈 <b>ACCURACY TRACKER</b>\n"
+        f"<code>┌── Attempted : {attempted}</code>\n"
+        f"<code>├── Correct   : {correct}</code>\n"
+        f"<code>└── Precision : {accuracy:.1f}%</code>\n\n"
+        f"🔥 <b>STREAK MONITOR</b>\n"
+        f"<code>┌── Current   : {c_streak}</code>\n"
+        f"<code>└── Best      : {m_streak}</code>\n"
+        f"{divider}"
+    )
+
+    # Use context.bot.send_message so it works for both direct command and button verify
+    await context.bot.send_message(
+        chat_id=user.id,
+        text=apply_footer(text),
+        parse_mode="HTML",
+        disable_web_page_preview=True
+	)
+	
+
+
 	
 # ---------------- LEADERBOARD helper ----------------
 # Helper for visual rank badges
