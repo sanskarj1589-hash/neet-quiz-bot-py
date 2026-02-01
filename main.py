@@ -384,10 +384,10 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons = [
             [InlineKeyboardButton("📢 Channel 1", url="https://t.me/NEETIQBOTUPDATES")],
             [InlineKeyboardButton("📢 Channel 2", url="https://t.me/SANSKAR279")],
-            [InlineKeyboardButton("🔄 Check Membership", callback_data="check_join")]
+            [InlineKeyboardButton("🔄 Verify access", callback_data="check_join")]
         ]
         return await update.message.reply_text(
-            "⚠️ <b>Access Denied!</b>\n\nYou must join our update channels to view your detailed performance profile.",
+            "⚠️ <b>Access Denied!</b>\n\nYou must join our both channels to view your detailed performance profile.",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="HTML"
         )
