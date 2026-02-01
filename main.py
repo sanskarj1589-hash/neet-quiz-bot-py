@@ -440,15 +440,17 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
 	) 
 
+
 async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    query = update.callback_query  # Check if triggered by button
+    query = update.callback_query
+    today_date = datetime.now().strftime('%Y-%m-%d')
 
     # 1. Private Chat Restriction
     if chat.type != 'private':
         return await update.message.reply_text(
-            "❌ <b>Personal Stats</b> can only be viewed in my private DM for privacy.",
+            "❌ <b>Personal Stats</b> can only be viewed in my private DM.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📊 View My Stats", url=f"https://t.me/{context.bot.username}?start=stats")]
             ]),
@@ -457,47 +459,48 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 2. Force Join Check
     is_joined = await check_force_join(user.id, context)
-    
     if not is_joined:
         if query:
-            # Show pop-up alert if still not joined
-            await query.answer("⚠️ You haven't joined both channels yet!", show_alert=True)
-        
+            await query.answer("⚠️ Join the channels first!", show_alert=True)
         buttons = [
             [InlineKeyboardButton("📢 Channel 1", url="https://t.me/NEETIQBOTUPDATES")],
             [InlineKeyboardButton("📢 Channel 2", url="https://t.me/SANSKAR279")],
             [InlineKeyboardButton("🔄 Verify access", callback_data="check_join")]
         ]
-        text = "⚠️ <b>Access Denied!</b>\n\nYou must join our both channels to view your detailed performance profile."
-        
+        text = "⚠️ <b>Access Denied!</b>\n\nJoin our channels to unlock your profile."
         if query:
             return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
-    # 3. SUCCESS: Handle Callback (Show Alert & Delete Menu)
     if query:
         await query.answer("✅ Access Verified!", show_alert=False)
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+        try: await query.message.delete()
+        except: pass
 
-    # 4. Data Fetching Logic
+    # 3. Data Fetching
     with db.get_db() as conn:
-        s = conn.execute("SELECT user_id, attempted, correct, score, current_streak, max_streak FROM stats WHERE user_id = ?", (user.id,)).fetchone()
+        # Global Stats
+        s = conn.execute("SELECT * FROM stats WHERE user_id = ?", (user.id,)).fetchone()
+        # Daily Stats
+        d = conn.execute("SELECT * FROM daily_stats WHERE user_id = ? AND day = ?", (user.id, today_date)).fetchone()
         
         if not s:
-            msg = "❌ <b>No statistics found!</b>\nAnswer some quizzes to generate your profile."
+            msg = "❌ <b>No data found!</b> Solve a quiz to start tracking."
             return await context.bot.send_message(chat_id=user.id, text=msg, parse_mode="HTML")
 
-        attempted, correct, score, c_streak, m_streak = s[1], s[2], s[3], s[4], s[5]
+        # Global Data
+        att, corr, score, c_streak, m_streak = s['attempted'], s['correct'], s['score'], s['current_streak'], s['max_streak']
+        # Daily Data
+        d_att = d['attempted'] if d else 0
+        d_corr = d['correct'] if d else 0
+        d_acc = (d_corr / d_att * 100) if d_att > 0 else 0
+        # Rank Calculation
         g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (score,)).fetchone()
         global_rank = g_rank_row[0]
 
-    # 5. Profile Construction
-    accuracy = (correct / attempted * 100) if attempted > 0 else 0
-    wrong = attempted - correct
-    xp = max(0, (correct * 4) - (wrong * 1))
+    # 4. Logic & Ranking
+    accuracy = (corr / att * 100) if att > 0 else 0
+    xp = max(0, (corr * 4) - ((att - corr) * 1))
 
     if xp > 1000: rank_title = "🏥 AIIMS Dean"
     elif xp > 500: rank_title = "👨‍⚕️ Senior Consultant"
@@ -506,40 +509,48 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif xp > 50:  rank_title = "📚 Elite Aspirant"
     else:          rank_title = "🧬 Medical Student"
 
+    # 5. Updated Professional Formatting
     divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
     safe_name = html.escape(user.first_name)
 
-    text = (
-        f"🪪 <b>NEETIQ USER PROFILE</b>\n"
+    profile_text = (
+        f"👤 <b>{safe_name.upper()} STATS</b>\n"
         f"{divider}\n"
-        f"👤 <b>NAME</b> : <code>{safe_name}</code>\n"
-        f"🏅 <b>RANK</b> : <b>{rank_title}</b>\n"
+        f"👤 <b>Name:</b> <code>{safe_name}</code>\n"
+        f"🏅 <b>Rank:</b> <b>{rank_title}</b>\n"
         f"{divider}\n"
-        f"📊 <b>POSITION DATA</b>\n"
+        f"🏆 <b>POSITION TRACKER</b>\n"
         f"<code>╭────────────────────</code>\n"
-        f"<code>│ 🏆 Global  : #{global_rank}</code>\n"
-        f"<code>│ 🧬 Total XP: {xp:,}</code>\n"
+        f"<code>│ 🌍 Global Rank : #{global_rank}</code>\n"
+        f"<code>│ 🧬 XP Points   : {xp:,}</code>\n"
         f"<code>╰────────────────────</code>\n\n"
-        f"📈 <b>ACCURACY TRACKER</b>\n"
-        f"<code>┌── Attempted : {attempted}</code>\n"
-        f"<code>├── Correct   : {correct}</code>\n"
-        f"<code>└── Precision : {accuracy:.1f}%</code>\n\n"
-        f"🔥 <b>STREAK MONITOR</b>\n"
-        f"<code>┌── Current   : {c_streak}</code>\n"
-        f"<code>└── Best      : {m_streak}</code>\n"
+        f"📅 <b>DAILY ACCURACY TRACKER</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 📝 Attempted : {d_att}</code>\n"
+        f"<code>│ ✅ Corrected : {d_corr}</code>\n"
+        f"<code>│ 🎯 Accuracy  : {d_acc:.1f}%</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"📊 <b>ALL-TIME TRACKER</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ 📖 Attempted : {att}</code>\n"
+        f"<code>│ ✅ Corrected : {corr}</code>\n"
+        f"<code>│ 📈 Accuracy  : {accuracy:.1f}%</code>\n"
+        f"<code>╰────────────────────</code>\n\n"
+        f"🔥 <b>STREAK TRACKER</b>\n"
+        f"<code>╭────────────────────</code>\n"
+        f"<code>│ ⚡ Current : {c_streak} in row</code>\n"
+        f"<code>│ 🏆 Best    : {m_streak}</code>\n"
+        f"<code>╰────────────────────</code>\n"
         f"{divider}"
     )
 
-    # Use context.bot.send_message so it works for both direct command and button verify
     await context.bot.send_message(
         chat_id=user.id,
-        text=apply_footer(text),
+        text=apply_footer(profile_text),
         parse_mode="HTML",
         disable_web_page_preview=True
-	)
+		)
 	
-
-
 	
 # ---------------- LEADERBOARD helper ----------------
 # Helper for visual rank badges
