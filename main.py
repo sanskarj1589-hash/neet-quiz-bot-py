@@ -12,6 +12,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     PollAnswerHandler,
+    CallbackQueryHandler,
     MessageHandler,
     filters,
     Defaults
@@ -39,6 +40,73 @@ logger = logging.getLogger(__name__)
 # Note: Using standard Markdown for simplicity to avoid escape errors
 defaults = Defaults(parse_mode="Markdown")
 
+# --- NEW CONFIG & HELPERS ---
+REQUIRED_CHANNELS = ["@NEETIQBOTUPDATES", "@SANSKAR279"]
+
+async def check_force_join(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Returns True if user joined all required channels."""
+    for channel in REQUIRED_CHANNELS:
+        try:
+            member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+            if member.status in ['left', 'kicked']:
+                return False
+        except Exception:
+            # If bot is not admin in channel, this might fail, so we skip
+            continue
+    return True
+
+
+async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the target selection and execution of the broadcast."""
+    query = update.callback_query
+    await query.answer()
+    
+    target = query.data
+    msg_text = context.user_data.get('broadcast_msg')
+
+    if target == "bc_cancel" or not msg_text:
+        return await query.edit_message_text("❌ <b>Broadcast cancelled.</b>", parse_mode="HTML")
+
+    await query.edit_message_text("⏳ <b>Broadcasting... please wait.</b>", parse_mode="HTML")
+
+    # Fetch IDs based on selection
+    with db.get_db() as conn:
+        users = conn.execute("SELECT user_id FROM users").fetchall() if target in ["bc_users", "bc_all"] else []
+        groups = conn.execute("SELECT chat_id FROM chats").fetchall() if target in ["bc_groups", "bc_all"] else []
+
+    u_ok, g_ok, u_fail, g_fail = 0, 0, 0, 0
+    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+    header = f"📢 <b>NEETIQ ANNOUNCEMENT</b>\n{divider}\n\n"
+
+    # Send to Users
+    for u in users:
+        try:
+            await context.bot.send_message(chat_id=u[0], text=f"{header}{msg_text}\n\n{divider}", parse_mode="HTML")
+            u_ok += 1
+            await asyncio.sleep(0.05)
+        except: u_fail += 1
+
+    # Send to Groups
+    for g in groups:
+        try:
+            await context.bot.send_message(chat_id=g[0], text=f"{header}{msg_text}\n\n{divider}", parse_mode="HTML")
+            g_ok += 1
+            await asyncio.sleep(0.05)
+        except: g_fail += 1
+
+    # Final Report
+    report = (
+        f"✅ <b>BROADCAST COMPLETE</b>\n"
+        f"{divider}\n"
+        f"👤 <b>Users:</b> <code>{u_ok}</code> | 👥 <b>Groups:</b> <code>{g_ok}</code>\n"
+        f"⚠️ <b>Failed:</b> <code>{u_fail + g_fail}</code>\n"
+        f"{divider}"
+    )
+    await query.message.edit_text(report, parse_mode="HTML")
+    # Clean up memory
+    if 'broadcast_msg' in context.user_data:
+        del context.user_data['broadcast_msg']
+		
 # ---------------- HELPERS ----------------
 MAX_MESSAGE_LENGTH = 4000  # Safe limit
 
@@ -296,46 +364,52 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(apply_footer(text))
 
-
 async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     chat_id = chat.id
 
+    # 1. Private Chat Restriction
+    if chat.type != 'private':
+        return await update.message.reply_text(
+            "❌ <b>Personal Stats</b> can only be viewed in my private DM for privacy.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 View My Stats", url=f"https://t.me/{context.bot.username}?start=stats")]
+            ]),
+            parse_mode="HTML"
+        )
+
+    # 2. Force Join Check
+    if not await check_force_join(user.id, context):
+        buttons = [
+            [InlineKeyboardButton("📢 Channel 1", url="https://t.me/NEETIQBOTUPDATES")],
+            [InlineKeyboardButton("📢 Channel 2", url="https://t.me/SANSKAR279")],
+            [InlineKeyboardButton("🔄 Check Membership", callback_data="check_join")]
+        ]
+        return await update.message.reply_text(
+            "⚠️ <b>Access Denied!</b>\n\nYou must join our update channels to view your detailed performance profile.",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="HTML"
+        )
+
+    # 3. Data Fetching Logic
     with db.get_db() as conn:
-        # Fetching stats; using indices for broad compatibility
         s = conn.execute("SELECT user_id, attempted, correct, score, current_streak, max_streak FROM stats WHERE user_id = ?", (user.id,)).fetchone()
         
         if not s:
             return await update.message.reply_text("❌ <b>No statistics found!</b>\nAnswer some quizzes to generate your profile.", parse_mode="HTML")
 
-        # Column mapping for clarity based on your query
-        # (user_id:0, attempted:1, correct:2, score:3, current_streak:4, max_streak:5)
-        attempted = s[1]
-        correct = s[2]
-        score = s[3]
-        c_streak = s[4]
-        m_streak = s[5]
+        attempted, correct, score, c_streak, m_streak = s[1], s[2], s[3], s[4], s[5]
 
         # Calculate Global Rank
         g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (score,)).fetchone()
         global_rank = g_rank_row[0]
 
-        # Calculate Group Rank (only if in a group)
-        group_rank = "N/A"
-        if chat.type != 'private':
-            # Note: This assumes you have a 'group_stats' table or column sync
-            gr_row = conn.execute("SELECT COUNT(*) + 1 FROM group_stats WHERE chat_id = ? AND score > ?",
-                                 (chat_id, score)).fetchone()
-            group_rank = gr_row[0] if gr_row else "N/A"
-
-    # 1. Performance Logic (NEET Scoring: +4, -1)
+    # 4. Profile Construction
     accuracy = (correct / attempted * 100) if attempted > 0 else 0
     wrong = attempted - correct
-    xp = (correct * 4) - (wrong * 1)
-    xp = max(0, xp)  # XP cannot be negative
+    xp = max(0, (correct * 4) - (wrong * 1))
 
-    # 2. Dynamic Rank Titles (Visual Redesign)
     if xp > 1000: rank_title = "🏥 AIIMS Dean"
     elif xp > 500: rank_title = "👨‍⚕️ Senior Consultant"
     elif xp > 300: rank_title = "💉 Resident Doctor"
@@ -343,7 +417,6 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif xp > 50:  rank_title = "📚 Elite Aspirant"
     else:          rank_title = "🧬 Medical Student"
 
-    # 3. HTML Profile Construction
     divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
     safe_name = html.escape(user.first_name)
 
@@ -356,7 +429,6 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 <b>POSITION DATA</b>\n"
         f"<code>╭────────────────────</code>\n"
         f"<code>│ 🏆 Global  : #{global_rank}</code>\n"
-        f"<code>│ 👥 Group   : #{group_rank}</code>\n"
         f"<code>│ 🧬 Total XP: {xp:,}</code>\n"
         f"<code>╰────────────────────</code>\n\n"
         f"📈 <b>ACCURACY TRACKER</b>\n"
@@ -374,9 +446,46 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         disable_web_page_preview=True
 	)
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Starts the broadcast flow and captures exact formatting."""
+    if not await is_admin(update.effective_user.id):
+        return
+
+    # 1. Capture the exact HTML formatting (bold, italic, spacing)
+    full_text = update.message.text_html 
+    
+    # Check if there is a message after the command
+    if len(full_text.split()) <= 1:
+        return await update.message.reply_text(
+            "❌ <b>Usage:</b> <code>/broadcast [message]</code>", 
+            parse_mode="HTML"
+        )
+    
+    # 2. Extract only the message content, keeping all formatting/spacing
+    # We split by space but only 1 time to keep the rest of the text intact
+    msg_to_send = full_text.split(None, 1)[1]
+    
+    # Store in user_data for the callback handler to use later
+    context.user_data['broadcast_msg'] = msg_to_send
+
+    # 3. Target selection menu
+    buttons = [
+        [
+            InlineKeyboardButton("👤 Users Only", callback_data="bc_users"),
+            InlineKeyboardButton("👥 Groups Only", callback_data="bc_groups")
+        ],
+        [InlineKeyboardButton("🌎 Both (Users + Groups)", callback_data="bc_all")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="bc_cancel")]
+    ]
+    
+    await update.message.reply_text(
+        "📢 <b>Broadcast Setup</b>\n\n"
+        "I have captured your message with its formatting. Where should I send it?",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="HTML"
+	) 
 	
-
-
 # ---------------- LEADERBOARD helper ----------------
 # Helper for visual rank badges
 def get_rank_icon(rank):
@@ -635,69 +744,7 @@ async def delallcompliments(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcasts a message exactly as formatted."""
-    if not await is_admin(update.effective_user.id):
-        return
 
-    # Check if there is text after the command
-    # /broadcast is 10 characters + 1 for the space
-    full_text = update.message.text_html  # This preserves <b>, <i>, and spacing
-    if len(full_text.split()) <= 1:
-        return await update.message.reply_text(
-            "❌ <b>Usage:</b> <code>/broadcast [message]</code>", 
-            parse_mode="HTML"
-        )
-    
-    # Extract everything after the first word (/broadcast)
-    # This keeps all your line breaks and custom spacing
-    msg_text = full_text.split(None, 1)[1]
-    
-    status_msg = await update.message.reply_text("⏳ <b>Starting Broadcast...</b>", parse_mode="HTML")
-
-    with db.get_db() as conn:
-        users = conn.execute("SELECT user_id FROM users").fetchall()
-        groups = conn.execute("SELECT chat_id FROM chats").fetchall()
-
-    u_ok, g_ok, u_fail, g_fail = 0, 0, 0, 0
-    divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
-    announcement_header = f"📢 <b>NEETIQ ANNOUNCEMENT</b>\n{divider}\n\n"
-
-    # Send to Users
-    for u in users:
-        try:
-            await context.bot.send_message(
-                chat_id=u[0], 
-                text=f"{announcement_header}{msg_text}\n\n{divider}",
-                parse_mode="HTML"
-            )
-            u_ok += 1
-            await asyncio.sleep(0.05) 
-        except Exception:
-            u_fail += 1
-
-    # Send to Groups
-    for g in groups:
-        try:
-            await context.bot.send_message(
-                chat_id=g[0], 
-                text=f"{announcement_header}{msg_text}\n\n{divider}",
-                parse_mode="HTML"
-            )
-            g_ok += 1
-            await asyncio.sleep(0.05)
-        except Exception:
-            g_fail += 1
-
-    report = (
-        "✅ <b>BROADCAST COMPLETE</b>\n"
-        f"{divider}\n"
-        f"👤 <b>Users:</b> <code>{u_ok}</code> | 👥 <b>Groups:</b> <code>{g_ok}</code>\n"
-        f"⚠️ <b>Failed:</b> <code>{u_fail + g_fail}</code>\n"
-        f"{divider}"
-    )
-    await status_msg.edit_text(report, parse_mode="HTML")
-	
 
 # ---------------- SETTINGS (FOOTER & AUTOQUIZ) ----------------
 
@@ -1049,7 +1096,6 @@ if __name__ == '__main__':
     ist_timezone = pytz.timezone('Asia/Kolkata')
 
     # 4. Build Application using Environment Variables
-    # We add the timezone to 'defaults' so all scheduled jobs use IST
     application = (
         ApplicationBuilder()
         .token(os.environ.get("BOT_TOKEN")) 
@@ -1058,15 +1104,13 @@ if __name__ == '__main__':
     )
 
     # --- HANDLERS ---
-    # Mirroring (Place first)
-    application.add_handler(MessageHandler(
-        filters.Chat(SOURCE_GROUP_ID) & 
-        (~filters.COMMAND) & 
-        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
-        mirror_messages
-    ))
+    
+    # 1. Callback Query Handlers (Add these first for button responsiveness)
+    from telegram.ext import CallbackQueryHandler
+    application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern="^bc_"))
+    application.add_handler(CallbackQueryHandler(mystats, pattern="^check_join$"))
 
-    # Commands
+    # 2. Commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("randomquiz", send_random_quiz))
@@ -1091,7 +1135,13 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
 
-    # Special Handlers
+    # 3. Mirroring & Special Handlers
+    application.add_handler(MessageHandler(
+        filters.Chat(SOURCE_GROUP_ID) & 
+        (~filters.COMMAND) & 
+        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
+        mirror_messages
+    ))
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
@@ -1108,14 +1158,13 @@ if __name__ == '__main__':
 
     jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
 
-    # Nightly Leaderboard scheduled for 9:30 PM (21:30) IST
-    # Because we set the default tzinfo above, we use a simple time(21, 30)
+    # Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
     jq.run_daily(
         nightly_leaderboard_job,
         time=time(hour=21, minute=0), 
         name="nightly_leaderboard",
         job_kwargs={
-            'misfire_grace_time': 600, # 10 minute grace period
+            'misfire_grace_time': 600,
             'coalesce': True           
         }
     )
