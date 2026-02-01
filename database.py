@@ -58,24 +58,22 @@ def get_db():
     finally:
         client.close()
 
-# --- DATABASE LOGIC ---
-
 def init_db():
-    """Initializes tables on Turso Cloud."""
+    """Initializes tables on Turso Cloud with Daily Stats and Streak tracking."""
     with get_db() as conn:
-        # Questions Bank
+        # 1. Questions Bank
         conn.execute("""CREATE TABLE IF NOT EXISTS questions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             question TEXT, a TEXT, b TEXT, c TEXT, d TEXT, 
             correct TEXT, explanation TEXT)""")
 
-        # Poll Tracking
+        # 2. Poll Tracking
         conn.execute("""CREATE TABLE IF NOT EXISTS active_polls (
             poll_id TEXT PRIMARY KEY, 
             chat_id INTEGER, 
             correct_option_id INTEGER)""")
 
-        # User & Group Registration
+        # 3. User & Group Registration
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, 
             username TEXT, first_name TEXT, joined_at TEXT)""")
@@ -85,23 +83,34 @@ def init_db():
 
         conn.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, added_at TEXT)")
 
-        # Stats & Scoring
+        # 4. Global Stats & Streak (Added last_activity_date)
         conn.execute("""CREATE TABLE IF NOT EXISTS stats (
-            user_id INTEGER PRIMARY KEY, attempted INTEGER DEFAULT 0,
-            correct INTEGER DEFAULT 0, score INTEGER DEFAULT 0, 
-            current_streak INTEGER DEFAULT 0, max_streak INTEGER DEFAULT 0, last_date TEXT)""")
+            user_id INTEGER PRIMARY KEY, 
+            attempted INTEGER DEFAULT 0,
+            correct INTEGER DEFAULT 0, 
+            score INTEGER DEFAULT 0, 
+            current_streak INTEGER DEFAULT 0, 
+            max_streak INTEGER DEFAULT 0, 
+            last_activity_date TEXT)""")
 
+        # 5. NEW: Daily Stats Table (Tracks unique stats per day)
+        conn.execute("""CREATE TABLE IF NOT EXISTS daily_stats (
+            user_id INTEGER, 
+            day TEXT, 
+            attempted INTEGER DEFAULT 0, 
+            correct INTEGER DEFAULT 0,
+            PRIMARY KEY(user_id, day))""")
+
+        # 6. Group Stats
         conn.execute("""CREATE TABLE IF NOT EXISTS group_stats (
             chat_id INTEGER, user_id INTEGER, score INTEGER DEFAULT 0, 
             attempted INTEGER DEFAULT 0, correct INTEGER DEFAULT 0,
             PRIMARY KEY(chat_id, user_id))""")
 
-        # Customization
+        # 7. Customization & Settings
         conn.execute("CREATE TABLE IF NOT EXISTS compliments (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, text TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_compliments (chat_id INTEGER, type TEXT, text TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS group_settings (chat_id INTEGER PRIMARY KEY, compliments_enabled INTEGER DEFAULT 1)")
-
-        # Global Settings
         conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
         
         defaults = [
@@ -113,10 +122,17 @@ def init_db():
         ]
         conn.executemany("INSERT OR IGNORE INTO settings VALUES (?,?)", defaults)
         
-    print("✅ Turso Cloud Database Initialized!")
+    print("✅ Turso Cloud Database Initialized with Daily Stats support!")
+        
 
 def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=None):
+    """Updates global, daily, and group stats with streak-reset logic."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    score_change = 4 if is_correct else -1
+    correct_inc = 1 if is_correct else 0
+
     with get_db() as conn:
+        # 1. Ensure user exists in the users table
         conn.execute("""
             INSERT INTO users (user_id, username, first_name) 
             VALUES (?, ?, ?)
@@ -124,18 +140,42 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
                 username = excluded.username, first_name = excluded.first_name
         """, (user_id, username, first_name))
 
-        score_change = 4 if is_correct else -1
-        correct_inc = 1 if is_correct else 0
+        # 2. Update Global Stats & Streak Logic
+        if is_correct:
+            # If CORRECT: +1 to current streak, update max_streak if current > max
+            conn.execute("""
+                INSERT INTO stats (user_id, attempted, correct, score, current_streak, max_streak, last_activity_date) 
+                VALUES (?, 1, 1, 4, 1, 1, ?)
+                ON CONFLICT(user_id) DO UPDATE SET 
+                    attempted = attempted + 1,
+                    correct = correct + 1,
+                    score = score + 4,
+                    current_streak = current_streak + 1,
+                    max_streak = CASE WHEN current_streak + 1 > max_streak THEN current_streak + 1 ELSE max_streak END,
+                    last_activity_date = ?
+            """, (user_id, today, today))
+        else:
+            # If WRONG: Reset current_streak to 0
+            conn.execute("""
+                INSERT INTO stats (user_id, attempted, correct, score, current_streak, last_activity_date) 
+                VALUES (?, 1, 0, -1, 0, ?)
+                ON CONFLICT(user_id) DO UPDATE SET 
+                    attempted = attempted + 1,
+                    score = score - 1,
+                    current_streak = 0,
+                    last_activity_date = ?
+            """, (user_id, today, today))
 
+        # 3. Update Daily Stats Table (Today's Progress)
         conn.execute("""
-            INSERT INTO stats (user_id, attempted, correct, score) 
-            VALUES (?, 1, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET 
+            INSERT INTO daily_stats (user_id, day, attempted, correct) 
+            VALUES (?, ?, 1, ?)
+            ON CONFLICT(user_id, day) DO UPDATE SET 
                 attempted = attempted + 1,
-                correct = correct + ?,
-                score = score + ?
-        """, (user_id, correct_inc, score_change, correct_inc, score_change))
+                correct = correct + ?
+        """, (user_id, today, correct_inc, correct_inc))
 
+        # 4. Update Group Stats (if applicable)
         if chat_id:
             conn.execute("""
                 INSERT INTO group_stats (user_id, chat_id, attempted, correct, score) 
@@ -145,6 +185,7 @@ def update_user_stats(user_id, chat_id, is_correct, username=None, first_name=No
                     correct = correct + ?,
                     score = score + ?
             """, (user_id, chat_id, correct_inc, score_change, correct_inc, score_change))
+
 
 def get_leaderboard_data(chat_id=None, limit=25):
     with get_db() as conn:
