@@ -55,6 +55,23 @@ async def check_force_join(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> 
             continue
     return True
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a notice to the owner."""
+    # Log the error with details
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+    # Prepare a message for the owner
+    error_message = (
+        f"⚠️ <b>Bot Error Detected</b>\n"
+        f"<code>{html.escape(str(context.error))}</code>"
+    )
+
+    # Try to notify the Owner (your ID is 6435499094)
+    try:
+        await context.bot.send_message(chat_id=OWNER_ID, text=error_message, parse_mode="HTML")
+    except:
+        pass # If we can't even message the owner, just give up
+		
 
 async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the target selection and execution of the broadcast."""
@@ -1149,22 +1166,6 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log the error and send a notice to the owner."""
-    # Log the error with details
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-
-    # Prepare a message for the owner
-    error_message = (
-        f"⚠️ <b>Bot Error Detected</b>\n"
-        f"<code>{html.escape(str(context.error))}</code>"
-    )
-
-    # Try to notify the Owner (your ID is 6435499094)
-    try:
-        await context.bot.send_message(chat_id=OWNER_ID, text=error_message, parse_mode="HTML")
-    except:
-        pass # If we can't even message the owner, just give up
 
 
 # --- MAIN EXECUTION ---
@@ -1235,7 +1236,7 @@ if __name__ == '__main__':
     # --- JOB QUEUE SETUP ---
     jq = application.job_queue
 
-    # Auto-quiz interval
+    # 1. Get the interval from database
     try:
         with db.get_db() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
@@ -1243,18 +1244,18 @@ if __name__ == '__main__':
     except Exception:
         interval_min = 30 
 
-        jq.run_repeating(
+    # 2. Start the Auto-quiz (Make sure this is NOT inside 'except')
+    jq.run_repeating(
         auto_quiz_job, 
         interval=interval_min * 60, 
         first=20,
         job_kwargs={
-            'misfire_grace_time': 60,  # Allows the job to be 60 seconds late
-            'coalesce': True           # Prevents multiple runs if the bot was offline
+            'misfire_grace_time': 300,  # Fixes the 'missed by' warning
+            'coalesce': True           
         }
-		)
-		
+    )
 
-    # Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
+    # 3. Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
     jq.run_daily(
         nightly_leaderboard_job,
         time=time(hour=21, minute=0), 
