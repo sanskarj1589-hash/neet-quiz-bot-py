@@ -1149,6 +1149,24 @@ def keep_alive():
     t.daemon = True
     t.start()
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a notice to the owner."""
+    # Log the error with details
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+    # Prepare a message for the owner
+    error_message = (
+        f"⚠️ <b>Bot Error Detected</b>\n"
+        f"<code>{html.escape(str(context.error))}</code>"
+    )
+
+    # Try to notify the Owner (your ID is 6435499094)
+    try:
+        await context.bot.send_message(chat_id=OWNER_ID, text=error_message, parse_mode="HTML")
+    except:
+        pass # If we can't even message the owner, just give up
+
+
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
     # 1. Initialize Database
@@ -1201,6 +1219,9 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
 
+	    # Error handler registration
+    application.add_error_handler(error_handler)
+	
     # 3. Mirroring & Special Handlers
     application.add_handler(MessageHandler(
         filters.Chat(SOURCE_GROUP_ID) & 
@@ -1222,7 +1243,16 @@ if __name__ == '__main__':
     except Exception:
         interval_min = 30 
 
-    jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
+        jq.run_repeating(
+        auto_quiz_job, 
+        interval=interval_min * 60, 
+        first=20,
+        job_kwargs={
+            'misfire_grace_time': 60,  # Allows the job to be 60 seconds late
+            'coalesce': True           # Prevents multiple runs if the bot was offline
+        }
+		)
+		
 
     # Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
     jq.run_daily(
