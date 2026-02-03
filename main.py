@@ -1080,71 +1080,6 @@ async def set_group_compliment(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(f"✅ Custom {c_type} message saved!")
 
 
-# REPLACE with your actual source group ID
-SOURCE_GROUP_ID = -1003729584653 
-
-async def mirror_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Enhanced Mirroring: Supports Photos, PDFs, Stickers, Polls, and Formatted Text.
-    """
-    # 1. Security Check
-    if update.effective_chat.id != SOURCE_GROUP_ID:
-        return
-
-    # 2. Skip commands
-    if update.message.text and update.message.text.startswith('/'):
-        return
-
-    # 3. Get targets from DB
-    with db.get_db() as conn:
-        user_rows = conn.execute("SELECT user_id FROM users").fetchall()
-        group_rows = conn.execute("SELECT chat_id FROM chats WHERE chat_id != ?", (SOURCE_GROUP_ID,)).fetchall()
-    
-    # Track counts for the final message
-    user_ids = [row[0] for row in user_rows]
-    group_ids = [row[0] for row in group_rows]
-    all_targets = set(user_ids + group_ids)
-
-    print(f"📡 Mirroring content to {len(all_targets)} destinations...")
-
-    user_success = 0
-    group_success = 0
-    removed = 0
-
-    for target_id in all_targets:
-        try:
-            # copy_message handles PDFs, Images, and Inline buttons automatically
-            await context.bot.copy_message(
-                chat_id=target_id,
-                from_chat_id=SOURCE_GROUP_ID,
-                message_id=update.message.message_id
-            )
-            
-            # Count success based on ID type (Groups usually have negative IDs)
-            if str(target_id).startswith('-'):
-                group_success += 1
-            else:
-                user_success += 1
-                
-            await asyncio.sleep(0.05) 
-
-        except (Forbidden, BadRequest) as e:
-            error_msg = str(e)
-            if "Forbidden" in error_msg or "Chat not found" in error_msg:
-                with db.get_db() as conn:
-                    conn.execute("DELETE FROM users WHERE user_id = ?", (target_id,))
-                    conn.execute("DELETE FROM chats WHERE chat_id = ?", (target_id,))
-                removed += 1
-        except Exception as e:
-            print(f"❌ Mirror Error for {target_id}: {e}")
-
-    # 4. Send the Congratulations Summary to YOU or the Master Group
-    summary = (
-        "Congratulations 🎉\n"
-        f"Sent to : {group_success} grps and {user_success} users"
-    )
-    await context.bot.send_message(chat_id=SOURCE_GROUP_ID, text=summary)
-
 import os
 from threading import Thread
 from flask import Flask
@@ -1222,14 +1157,7 @@ if __name__ == '__main__':
 
 	    # Error handler registration
     application.add_error_handler(error_handler)
-	
-    # 3. Mirroring & Special Handlers
-    application.add_handler(MessageHandler(
-        filters.Chat(SOURCE_GROUP_ID) & 
-        (~filters.COMMAND) & 
-        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
-        mirror_messages
-    ))
+
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
