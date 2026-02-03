@@ -462,10 +462,12 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     query = update.callback_query
+    # Using UTC or IST (pytz) is better for consistency in logs
     today_date = datetime.now().strftime('%Y-%m-%d')
 
     # 1. Private Chat Restriction
     if chat.type != 'private':
+        # If user triggers this in a group, we send a helpful link
         return await update.message.reply_text(
             "❌ <b>Personal Stats</b> can only be viewed in my private DM.",
             reply_markup=InlineKeyboardMarkup([
@@ -477,22 +479,31 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2. Force Join Check
     is_joined = await check_force_join(user.id, context)
     if not is_joined:
-        if query:
-            await query.answer("⚠️ Join the channels first!", show_alert=True)
         buttons = [
             [InlineKeyboardButton("📢 Channel 1", url="https://t.me/NEETIQBOTUPDATES")],
             [InlineKeyboardButton("📢 Channel 2", url="https://t.me/SANSKAR279")],
             [InlineKeyboardButton("🔄 Verify access", callback_data="check_join")]
         ]
         text = "⚠️ <b>Access Denied!</b>\n\nJoin our channels to unlock your profile."
+        
         if query:
-            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+            # Handle the 'Message is not modified' error here
+            try:
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise e
+            return
+            
         return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
+    # If it was a callback, answer the query to stop the loading spinner
     if query:
-        await query.answer("✅ Access Verified!", show_alert=False)
-        try: await query.message.delete()
-        except: pass
+        await query.answer("✅ Access Verified!")
+        try: 
+            await query.message.delete()
+        except: 
+            pass
 
     # 3. Data Fetching
     with db.get_db() as conn:
@@ -505,20 +516,28 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "❌ <b>No data found!</b> Solve a quiz to start tracking."
             return await context.bot.send_message(chat_id=user.id, text=msg, parse_mode="HTML")
 
-        # Global Data
-        att, corr, score, c_streak, m_streak = s['attempted'], s['correct'], s['score'], s['current_streak'], s['max_streak']
+        # Global Data (Safe extraction from RowWrapper)
+        att = s['attempted']
+        corr = s['correct']
+        score = s['score']
+        c_streak = s['current_streak']
+        m_streak = s['max_streak']
+
         # Daily Data
         d_att = d['attempted'] if d else 0
         d_corr = d['correct'] if d else 0
         d_acc = (d_corr / d_att * 100) if d_att > 0 else 0
-        # Rank Calculation
-        g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (score,)).fetchone()
-        global_rank = g_rank_row[0]
+
+        # Rank Calculation (Optimized: only counting rows with higher score)
+        g_rank_row = conn.execute("SELECT COUNT(*) FROM stats WHERE score > ?", (score,)).fetchone()
+        global_rank = g_rank_row[0] + 1
 
     # 4. Logic & Ranking
     accuracy = (corr / att * 100) if att > 0 else 0
+    # XP formula: Correct +4, Incorrect -1
     xp = max(0, (corr * 4) - ((att - corr) * 1))
 
+    # Professional Title System
     if xp > 1000: rank_title = "🏥 AIIMS Dean"
     elif xp > 500: rank_title = "👨‍⚕️ Senior Consultant"
     elif xp > 300: rank_title = "💉 Resident Doctor"
@@ -526,7 +545,7 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif xp > 50:  rank_title = "📚 Elite Aspirant"
     else:          rank_title = "🧬 Medical Student"
 
-    # 5. Updated Professional Formatting
+    # 5. UI Construction
     divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
     safe_name = html.escape(user.first_name)
 
@@ -561,12 +580,13 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{divider}"
     )
 
+    # Ensure apply_footer is defined globally in your main.py
     await context.bot.send_message(
         chat_id=user.id,
-        text=apply_footer(profile_text),
+        text=apply_footer(profile_text) if 'apply_footer' in globals() else profile_text,
         parse_mode="HTML",
         disable_web_page_preview=True
-		)
+	)
 	
 	
 # ---------------- LEADERBOARD helper ----------------
