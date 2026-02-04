@@ -441,60 +441,63 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	) 
 
 
+
+
 async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Determine if this came from a button click or a message
+    query = update.callback_query
     user = update.effective_user
     chat = update.effective_chat
-    query = update.callback_query
     today_date = datetime.now().strftime('%Y-%m-%d')
 
     # 1. Private Chat Restriction
     if chat.type != 'private':
-        return await update.message.reply_text(
-            "❌ <b>Personal Stats</b> can only be viewed in my private DM.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📊 View My Stats", url=f"https://t.me/{context.bot.username}?start=stats")]
-            ]),
-            parse_mode="HTML"
+        text = (
+            "❌ <b>Personal Stats</b> can only be viewed in my private DM."
         )
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 View My Stats", url=f"https://t.me/{context.bot.username}?start=stats")]
+        ])
+        # Use effective_message to handle both cases safely
+        return await update.effective_message.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
     # 2. Force Join Check
     is_joined = await check_force_join(user.id, context)
     if not is_joined:
-        if query:
-            await query.answer("⚠️ Join the channels first!", show_alert=True)
         buttons = [
             [InlineKeyboardButton("📢 Channel 1", url="https://t.me/NEETIQBOTUPDATES")],
             [InlineKeyboardButton("📢 Channel 2", url="https://t.me/SANSKAR279")],
             [InlineKeyboardButton("🔄 Verify access", callback_data="check_join")]
         ]
         text = "⚠️ <b>Access Denied!</b>\n\nJoin our channels to unlock your profile."
+        
         if query:
+            await query.answer("⚠️ Join the channels first!", show_alert=True)
             return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
         return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
+    # If it's a callback, answer it so the "loading" icon disappears
     if query:
-        await query.answer("✅ Access Verified!", show_alert=False)
-        try: await query.message.delete()
-        except: pass
+        await query.answer("✅ Access Verified!")
+        try: 
+            await query.message.delete()
+        except: 
+            pass
 
     # 3. Data Fetching
     with db.get_db() as conn:
-        # Global Stats
         s = conn.execute("SELECT * FROM stats WHERE user_id = ?", (user.id,)).fetchone()
-        # Daily Stats
         d = conn.execute("SELECT * FROM daily_stats WHERE user_id = ? AND day = ?", (user.id, today_date)).fetchone()
         
         if not s:
             msg = "❌ <b>No data found!</b> Solve a quiz to start tracking."
             return await context.bot.send_message(chat_id=user.id, text=msg, parse_mode="HTML")
 
-        # Global Data
         att, corr, score, c_streak, m_streak = s['attempted'], s['correct'], s['score'], s['current_streak'], s['max_streak']
-        # Daily Data
         d_att = d['attempted'] if d else 0
         d_corr = d['correct'] if d else 0
         d_acc = (d_corr / d_att * 100) if d_att > 0 else 0
-        # Rank Calculation
+        
         g_rank_row = conn.execute("SELECT COUNT(*) + 1 FROM stats WHERE score > ?", (score,)).fetchone()
         global_rank = g_rank_row[0]
 
@@ -509,7 +512,7 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif xp > 50:  rank_title = "📚 Elite Aspirant"
     else:          rank_title = "🧬 Medical Student"
 
-    # 5. Updated Professional Formatting
+    # 5. Formatting
     divider = "<b>━━━━━━━━━━━━━━━━━━━━</b>"
     safe_name = html.escape(user.first_name)
 
@@ -544,12 +547,13 @@ async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{divider}"
     )
 
+    # Use context.bot.send_message to ensure it goes to the user's DM
     await context.bot.send_message(
         chat_id=user.id,
         text=apply_footer(profile_text),
         parse_mode="HTML",
         disable_web_page_preview=True
-		)
+	)
 	
 	
 # ---------------- LEADERBOARD helper ----------------
