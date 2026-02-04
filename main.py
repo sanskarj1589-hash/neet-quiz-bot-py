@@ -1,9 +1,10 @@
 import logging
 import asyncio
 import pytz 
-import time
 import html
 import logging
+import time
+from datetime import time as dt_time
 from telegram import Update
 from html import escape
 from telegram.constants import ParseMode
@@ -1229,7 +1230,7 @@ if __name__ == '__main__':
     # Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=0), 
+        time=dt_time(hour=21, minute=0),
         name="nightly_leaderboard",
         job_kwargs={
             'misfire_grace_time': 600,
