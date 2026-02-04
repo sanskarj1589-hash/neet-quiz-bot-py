@@ -2,6 +2,9 @@ import logging
 import asyncio
 import pytz 
 import html
+import time
+import logging
+from telegram import Update
 from html import escape
 from telegram.constants import ParseMode
 from datetime import datetime, time
@@ -55,6 +58,11 @@ async def check_force_join(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> 
             continue
     return True
 
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.exception("Unhandled exception", exc_info=context.error)
+
+application.add_error_handler(error_handler)
 
 async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the target selection and execution of the broadcast."""
@@ -913,7 +921,7 @@ async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
                 conn.execute("INSERT INTO active_polls (poll_id, chat_id, correct_option_id) VALUES (?,?,?)", 
                              (msg.poll.id, c[0], c_idx))
             
-            await asyncio.sleep(0.2) 
+            await asyncio.sleep(0.05) 
         except Exception:
             continue
 
@@ -1235,6 +1243,18 @@ if __name__ == '__main__':
         }
     )
 
-    print("🚀 NEETIQBot is fully secured and Online!")
-    application.run_polling(drop_pending_updates=True)
-	
+    print("🚀 NEETIQBot starting with auto-restart protection...")
+
+while True:
+    try:
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES
+        )
+    except Exception as e:
+        logger.exception("💥 Bot crashed unexpectedly. Restarting in 5 seconds...")
+        time.sleep(5)
+    else:
+        logger.warning("⚠️ run_polling exited normally. Restarting in 5 seconds...")
+        time.sleep(5)
+    
