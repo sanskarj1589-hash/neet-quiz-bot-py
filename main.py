@@ -1222,9 +1222,7 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
-    # --- JOB QUEUE SETUP ---
-    jq = application.job_queue
-
+    # Auto-quiz interval
     try:
         with db.get_db() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
@@ -1232,7 +1230,17 @@ if __name__ == '__main__':
     except Exception:
         interval_min = 30 
 
-    jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
+    # Updated with 5-minute misfire grace
+    jq.run_repeating(
+        auto_quiz_job, 
+        interval=interval_min * 60, 
+        first=20,
+        job_kwargs={
+            'misfire_grace_time': 300,  # 5 minutes (300 seconds)
+            'coalesce': True           # Prevents multiple runs if the bot was down for a long time
+        }
+	)
+	
 
     jq.run_daily(
         nightly_leaderboard_job,
