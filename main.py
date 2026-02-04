@@ -1168,6 +1168,13 @@ def keep_alive():
 
 
 
+import os
+import time
+import logging
+from zoneinfo import ZoneInfo
+from datetime import time as dt_time
+from telegram.constants import ParseMode
+
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
     # 1. Initialize Database
@@ -1177,95 +1184,102 @@ if __name__ == '__main__':
     print("🌐 Starting Keep-Alive server...")
     keep_alive()
 
-    # 3. Define Timezone for Kolkata
-    ist_timezone = pytz.timezone('Asia/Kolkata')
+    # 3. Define Timezone for Kolkata (Modern way)
+    ist_timezone = ZoneInfo('Asia/Kolkata')
 
-    # 4. Build Application using Environment Variables
-    application = (
-        ApplicationBuilder()
-        .token(os.environ.get("BOT_TOKEN")) 
-        .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
-        .build()
-    )
+    while True: # Auto-restart loop if the polling crashes
+        try:
+            # 4. Build Application
+            application = (
+                ApplicationBuilder()
+                .token(os.environ.get("BOT_TOKEN")) 
+                .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
+                .build()
+            )
 
-    # --- HANDLERS ---
-    
-    # 1. Callback Query Handlers (Add these first for button responsiveness)
-    from telegram.ext import CallbackQueryHandler
-    application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern="^bc_"))
-    application.add_handler(CallbackQueryHandler(mystats, pattern="^check_join$"))
+            # --- HANDLERS ---
+            
+            # Error handler (Prevents internal errors from stopping the bot)
+            application.add_error_handler(error_handler)
 
-    # 2. Commands
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("randomquiz", send_random_quiz))
-    application.add_handler(CommandHandler("myscore", myscore))
-    application.add_handler(CommandHandler("mystats", mystats))
-    application.add_handler(CommandHandler("leaderboard", leaderboard))
-    application.add_handler(CommandHandler("botstats", bot_stats))
-    application.add_handler(CommandHandler("setcomp", set_group_compliment))
-    application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
-    application.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
-    application.add_handler(CommandHandler("addadmin", add_admin))
-    application.add_handler(CommandHandler("removeadmin", remove_admin))
-    application.add_handler(CommandHandler("adminlist", adminlist))
-    application.add_handler(CommandHandler("addquestion", addquestion))
-    application.add_handler(CommandHandler("questions", questions_stats))
-    application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("addcompliment", addcompliment))
-    application.add_handler(CommandHandler("listcompliments", listcompliments))
-    application.add_handler(CommandHandler("delcompliment", delcompliment))
-    application.add_handler(CommandHandler("footer", footer_cmd))
-    application.add_handler(CommandHandler("autoquiz", autoquiz))
-    application.add_handler(CommandHandler("delallquestions", del_all_questions))
-    application.add_handler(CommandHandler("delallcompliments", delallcompliments))
+            # 1. Callback Query Handlers
+            application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern="^bc_"))
+            application.add_handler(CallbackQueryHandler(mystats, pattern="^check_join$"))
 
-	    # Error handler registration
-    application.add_error_handler(error_handler)
-	
-    # 3. Mirroring & Special Handlers
-    application.add_handler(MessageHandler(
-        filters.Chat(SOURCE_GROUP_ID) & 
-        (~filters.COMMAND) & 
-        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
-        mirror_messages
-    ))
-    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
-    application.add_handler(PollAnswerHandler(handle_poll_answer))
+            # 2. Commands
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("help", help_command))
+            application.add_handler(CommandHandler("randomquiz", send_random_quiz))
+            application.add_handler(CommandHandler("myscore", myscore))
+            application.add_handler(CommandHandler("mystats", mystats))
+            application.add_handler(CommandHandler("leaderboard", leaderboard))
+            application.add_handler(CommandHandler("botstats", bot_stats))
+            application.add_handler(CommandHandler("setcomp", set_group_compliment))
+            application.add_handler(CommandHandler("comp_toggle", toggle_compliments))
+            application.add_handler(CommandHandler("groupleaderboard", groupleaderboard))
+            application.add_handler(CommandHandler("addadmin", add_admin))
+            application.add_handler(CommandHandler("removeadmin", remove_admin))
+            application.add_handler(CommandHandler("adminlist", adminlist))
+            application.add_handler(CommandHandler("addquestion", addquestion))
+            application.add_handler(CommandHandler("questions", questions_stats))
+            application.add_handler(CommandHandler("broadcast", broadcast))
+            application.add_handler(CommandHandler("addcompliment", addcompliment))
+            application.add_handler(CommandHandler("listcompliments", listcompliments))
+            application.add_handler(CommandHandler("delcompliment", delcompliment))
+            application.add_handler(CommandHandler("footer", footer_cmd))
+            application.add_handler(CommandHandler("autoquiz", autoquiz))
+            application.add_handler(CommandHandler("delallquestions", del_all_questions))
+            application.add_handler(CommandHandler("delallcompliments", delallcompliments))
 
-    # --- JOB QUEUE SETUP ---
-    jq = application.job_queue
+            # 3. Mirroring & Special Handlers
+            application.add_handler(MessageHandler(
+                filters.Chat(SOURCE_GROUP_ID) & 
+                (~filters.COMMAND) & 
+                (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
+                mirror_messages
+            ))
+            application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
+            application.add_handler(PollAnswerHandler(handle_poll_answer))
 
-    # 1. Get the interval from database
-    try:
-        with db.get_db() as conn:
-            row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
-            interval_min = int(row[0]) if row else 30
-    except Exception:
-        interval_min = 30 
+            # --- JOB QUEUE SETUP ---
+            jq = application.job_queue
 
-    # 2. Start the Auto-quiz (Make sure this is NOT inside 'except')
-    jq.run_repeating(
-        auto_quiz_job, 
-        interval=interval_min * 60, 
-        first=20,
-        job_kwargs={
-            'misfire_grace_time': 300,  # Fixes the 'missed by' warning
-            'coalesce': True           
-        }
-    )
+            try:
+                with db.get_db() as conn:
+                    row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
+                    interval_min = int(row[0]) if row else 30
+            except Exception:
+                interval_min = 30 
 
-    # 3. Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
-    jq.run_daily(
-        nightly_leaderboard_job,
-        time=time(hour=21, minute=0), 
-        name="nightly_leaderboard",
-        job_kwargs={
-            'misfire_grace_time': 600,
-            'coalesce': True           
-        }
-    )
+            jq.run_repeating(
+                auto_quiz_job, 
+                interval=interval_min * 60, 
+                first=20,
+                job_kwargs={
+                    'misfire_grace_time': 300,
+                    'coalesce': True           
+                }
+            )
 
-    print("🚀 NEETIQBot is fully secured and Online!")
-    application.run_polling(drop_pending_updates=True)
-	
+            # Nightly Leaderboard at 21:00 IST
+            jq.run_daily(
+                nightly_leaderboard_job,
+                time=dt_time(hour=21, minute=0, tzinfo=ist_timezone), 
+                name="nightly_leaderboard",
+                job_kwargs={
+                    'misfire_grace_time': 600,
+                    'coalesce': True           
+                }
+            )
+
+            print("🚀 NEETIQBot is fully secured and Online!")
+            
+            # Polling: drop_pending_updates=True clears old messages on restart
+            # stop_signals=None prevents external signals from killing the process abruptly
+            application.run_polling(drop_pending_updates=True, stop_signals=None)
+
+        except Exception as e:
+            print(f"⚠️ Critical Error: {e}")
+            print("🔄 Auto-restarting bot in 10 seconds...")
+            time.sleep(10) # Pause to avoid rapid-fire restart loops
+			
