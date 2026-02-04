@@ -1163,14 +1163,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("autoquiz", autoquiz))
     application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
-
-    # 3. Mirroring & Special Handlers
-    application.add_handler(MessageHandler(
-        filters.Chat(SOURCE_GROUP_ID) & 
-        (~filters.COMMAND) & 
-        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
-        mirror_messages
-    ))
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
