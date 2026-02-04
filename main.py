@@ -1132,9 +1132,12 @@ async def mirror_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await context.bot.send_message(chat_id=SOURCE_GROUP_ID, text=summary)
 
+
+
 import os
 from threading import Thread
 from flask import Flask
+import signal
 
 # --- KEEP-ALIVE SERVER FOR RENDER ---
 flask_app = Flask('')
@@ -1165,17 +1168,19 @@ if __name__ == '__main__':
     # 3. Define Timezone for Kolkata
     ist_timezone = pytz.timezone('Asia/Kolkata')
 
-    # 4. Build Application using Environment Variables
+    # 4. Build Application with Signals Disabled
+    # ADDED: .signal_handlers(None) prevents the bot from stopping on SIGTERM/SIGINT
     application = (
         ApplicationBuilder()
         .token(os.environ.get("BOT_TOKEN")) 
         .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
+        .signal_handlers(None) 
         .build()
     )
 
     # --- HANDLERS ---
     
-    # 1. Callback Query Handlers (Add these first for button responsiveness)
+    # 1. Callback Query Handlers
     from telegram.ext import CallbackQueryHandler
     application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern="^bc_"))
     application.add_handler(CallbackQueryHandler(mystats, pattern="^check_join$"))
@@ -1218,7 +1223,6 @@ if __name__ == '__main__':
     # --- JOB QUEUE SETUP ---
     jq = application.job_queue
 
-    # Auto-quiz interval
     try:
         with db.get_db() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
@@ -1228,7 +1232,6 @@ if __name__ == '__main__':
 
     jq.run_repeating(auto_quiz_job, interval=interval_min * 60, first=20)
 
-    # Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
     jq.run_daily(
         nightly_leaderboard_job,
         time=time(hour=21, minute=0), 
@@ -1239,6 +1242,13 @@ if __name__ == '__main__':
         }
     )
 
+    # --- MODIFIED POLLING ---
     print("🚀 NEETIQBot is fully secured and Online!")
-    application.run_polling(drop_pending_updates=True)
+    
+    # 1. CUT: drop_pending_updates=True (Changed to False so it doesn't lose messages on restart)
+    # 2. ADDED: stop_signals=None (Tells the polling loop to ignore stop signals)
+    application.run_polling(
+        drop_pending_updates=False,
+        stop_signals=None
+			)
 	
