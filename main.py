@@ -1157,7 +1157,11 @@ def keep_alive():
     t.start()
 
 
-
+import os
+from zoneinfo import ZoneInfo # Modern alternative to pytz
+from datetime import time
+from telegram.ext import ApplicationBuilder, Defaults, CommandHandler, MessageHandler, PollAnswerHandler, CallbackQueryHandler, filters
+from telegram.constants import ParseMode
 
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
@@ -1168,11 +1172,10 @@ if __name__ == '__main__':
     print("🌐 Starting Keep-Alive server...")
     keep_alive()
 
-    # 3. Define Timezone for Kolkata
-    ist_timezone = pytz.timezone('Asia/Kolkata')
+    # 3. Define Timezone using zoneinfo (Removes PTBDeprecationWarning)
+    ist_timezone = ZoneInfo('Asia/Kolkata')
 
     # 4. Build Application
-    # REMOVED: .signal_handlers(None) was causing the error
     application = (
         ApplicationBuilder()
         .token(os.environ.get("BOT_TOKEN")) 
@@ -1180,10 +1183,12 @@ if __name__ == '__main__':
         .build()
     )
 
+    # Shortcut for JobQueue
+    jq = application.job_queue
+
     # --- HANDLERS ---
     
     # 1. Callback Query Handlers
-    from telegram.ext import CallbackQueryHandler
     application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern="^bc_"))
     application.add_handler(CallbackQueryHandler(mystats, pattern="^check_join$"))
 
@@ -1222,7 +1227,7 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
-    # Auto-quiz interval
+    # Auto-quiz interval setup
     try:
         with db.get_db() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
@@ -1230,21 +1235,20 @@ if __name__ == '__main__':
     except Exception:
         interval_min = 30 
 
-    # Updated with 5-minute misfire grace
+    # Jobs (Fixed Indentation)
     jq.run_repeating(
         auto_quiz_job, 
         interval=interval_min * 60, 
         first=20,
         job_kwargs={
-            'misfire_grace_time': 300,  # 5 minutes (300 seconds)
-            'coalesce': True           # Prevents multiple runs if the bot was down for a long time
+            'misfire_grace_time': 300,  # 5 minutes
+            'coalesce': True           
         }
-	)
-	
+    )
 
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=0), 
+        time=time(hour=21, minute=0, tzinfo=ist_timezone), 
         name="nightly_leaderboard",
         job_kwargs={
             'misfire_grace_time': 600,
@@ -1255,10 +1259,8 @@ if __name__ == '__main__':
     # --- UPDATED POLLING ---
     print("🚀 NEETIQBot is fully secured and Online!")
     
-    # We use stop_signals=None here to ensure the bot ignores shutdown requests.
-    # We use drop_pending_updates=False so it replies to missed messages.
+    # drop_pending_updates=False ensures no user messages are lost during downtime
     application.run_polling(
         drop_pending_updates=False,
         stop_signals=None 
-			)
-	
+	)
