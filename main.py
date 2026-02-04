@@ -55,22 +55,7 @@ async def check_force_join(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> 
             continue
     return True
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log the error and send a notice to the owner."""
-    # Log the error with details
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
-    # Prepare a message for the owner
-    error_message = (
-        f"⚠️ <b>Bot Error Detected</b>\n"
-        f"<code>{html.escape(str(context.error))}</code>"
-    )
-
-    # Try to notify the Owner (your ID is 6435499094)
-    try:
-        await context.bot.send_message(chat_id=OWNER_ID, text=error_message, parse_mode="HTML")
-    except:
-        pass # If we can't even message the owner, just give up
 		
 
 async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1176,7 +1161,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
 
 	    # Error handler registration
-    application.add_error_handler(error_handler)
+    
 
     application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
