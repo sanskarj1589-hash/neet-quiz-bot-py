@@ -1084,58 +1084,69 @@ async def set_group_compliment(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await update.message.reply_text(f"✅ Custom {c_type} message saved!")
 
-
 import os
+import pytz
+from datetime import time
 from threading import Thread
 from flask import Flask
 
-# --- KEEP-ALIVE SERVER FOR RENDER ---
-flask_app = Flask('')
+# Telegram imports
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, PollAnswerHandler, Defaults, filters
+from telegram.constants import ParseMode
+
+# --- 1. KEEP-ALIVE SERVER (FLASK) ---
+flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
     return "Bot is running!"
 
 def run_flask():
-    # Render provides PORT environment variable automatically
+    # Render provides the PORT environment variable automatically
     port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host='0.0.0.0', port=port)
+    # use_reloader=False is CRITICAL when running in a thread
+    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
 
-
-
-# --- MAIN EXECUTION ---
+# --- 2. MAIN EXECUTION BLOCK ---
 if __name__ == '__main__':
-    # 1. Initialize Database
-    db.init_db()
-    
-    # 2. Start the Keep-Alive Web Server
+    # Initialize Database
+    try:
+        db.init_db()
+    except NameError:
+        print("⚠️ 'db' not defined. Ensure your database module is imported.")
+
+    # Start the Keep-Alive Web Server immediately
     print("🌐 Starting Keep-Alive server...")
     keep_alive()
 
-    # 3. Define Timezone for Kolkata
+    # Define Timezone
     ist_timezone = pytz.timezone('Asia/Kolkata')
 
-    # 4. Build Application using Environment Variables
+    # Build Application
+    token = os.environ.get("BOT_TOKEN")
+    if not token:
+        print("❌ CRITICAL ERROR: BOT_TOKEN not found in environment variables!")
+        exit(1)
+
     application = (
         ApplicationBuilder()
-        .token(os.environ.get("BOT_TOKEN")) 
+        .token(token) 
         .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
         .build()
     )
 
-    # --- HANDLERS ---
+    # --- HANDLERS REGISTRATION ---
     
-    # 1. Callback Query Handlers (Add these first for button responsiveness)
-    from telegram.ext import CallbackQueryHandler
+    # Callback Handlers
     application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern="^bc_"))
     application.add_handler(CallbackQueryHandler(mystats, pattern="^check_join$"))
 
-    # 2. Commands
+    # Command Handlers (Organized)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("randomquiz", send_random_quiz))
@@ -1160,45 +1171,51 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
 
-	    # Error handler registration
-    
-
-    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
+    # Message & Poll Handlers
+    # Note: Ensure SOURCE_GROUP_ID is defined elsewhere
+    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(chat_id=int(os.environ.get("SOURCE_GROUP_ID", 0))), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
     # --- JOB QUEUE SETUP ---
     jq = application.job_queue
 
-    # 1. Get the interval from database
+    # Fetch dynamic interval from DB
     try:
         with db.get_db() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
             interval_min = int(row[0]) if row else 30
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ DB Fetch failed ({e}), using default 30m.")
         interval_min = 30 
 
-    # 2. Start the Auto-quiz (Make sure this is NOT inside 'except')
+    # 1. Repeating Auto-Quiz
     jq.run_repeating(
         auto_quiz_job, 
         interval=interval_min * 60, 
-        first=20,
+        first=15, # Starts 15 seconds after bot launch
+        name="auto_quiz_job",
         job_kwargs={
-            'misfire_grace_time': 300,  # Fixes the 'missed by' warning
+            'misfire_grace_time': 300, 
             'coalesce': True           
         }
     )
 
-    # 3. Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
+    # 2. Daily Leaderboard at 9:00 PM IST
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=0), 
+        time=time(hour=21, minute=0, tzinfo=ist_timezone), 
         name="nightly_leaderboard",
         job_kwargs={
-            'misfire_grace_time': 600,
+            'misfire_grace_time': 300,
             'coalesce': True           
         }
     )
 
+    # --- START THE BOT ---
     print("🚀 NEETIQBot is fully secured and Online!")
+    
+    # drop_pending_updates=True is vital for Render to avoid getting 
+    # stuck in a loop of old messages if the bot restarts frequently.
     application.run_polling(drop_pending_updates=True)
 	
+
