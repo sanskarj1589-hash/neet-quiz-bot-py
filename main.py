@@ -1156,6 +1156,9 @@ def keep_alive():
     t.daemon = True
     t.start()
 
+
+
+
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
     # 1. Initialize Database
@@ -1168,13 +1171,12 @@ if __name__ == '__main__':
     # 3. Define Timezone for Kolkata
     ist_timezone = pytz.timezone('Asia/Kolkata')
 
-    # 4. Build Application with Signals Disabled
-    # ADDED: .signal_handlers(None) prevents the bot from stopping on SIGTERM/SIGINT
+    # 4. Build Application
+    # REMOVED: .signal_handlers(None) was causing the error
     application = (
         ApplicationBuilder()
         .token(os.environ.get("BOT_TOKEN")) 
         .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
-        .signal_handlers(None) 
         .build()
     )
 
@@ -1242,13 +1244,13 @@ if __name__ == '__main__':
         }
     )
 
-    # --- MODIFIED POLLING ---
+    # --- UPDATED POLLING ---
     print("🚀 NEETIQBot is fully secured and Online!")
     
-    # 1. CUT: drop_pending_updates=True (Changed to False so it doesn't lose messages on restart)
-    # 2. ADDED: stop_signals=None (Tells the polling loop to ignore stop signals)
+    # We use stop_signals=None here to ensure the bot ignores shutdown requests.
+    # We use drop_pending_updates=False so it replies to missed messages.
     application.run_polling(
         drop_pending_updates=False,
-        stop_signals=None
+        stop_signals=None 
 			)
 	
