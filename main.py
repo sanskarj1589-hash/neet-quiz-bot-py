@@ -144,51 +144,62 @@ async def is_admin(user_id: int) -> bool:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    
+
     # --- Deep-Linking Logic (start=stats) ---
     if chat.type == 'private' and context.args and context.args[0] == "stats":
         return await mystats(update, context)
 
     # Securely escape the user's name
     safe_name = html.escape(user.first_name)
-    
-    # Database Logic
+
+    # ---------------- DATABASE LOGIC ----------------
     with db.get_db() as conn:
+        # Always store users
         conn.execute(
             "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
             (user.id, user.username, user.first_name, str(datetime.now()))
         )
-        if chat.type != 'private':
+
+        # ✅ STORE ONLY GROUPS / SUPERGROUPS (NO CHANNELS)
+        if chat.type in ("group", "supergroup"):
             conn.execute(
                 "INSERT OR IGNORE INTO chats (chat_id, type, title, added_at) VALUES (?,?,?,?)",
                 (chat.id, chat.type, chat.title, str(datetime.now()))
             )
 
+    # ---------------- PRIVATE CHAT ----------------
     if chat.type == 'private':
         welcome = (
             f"👋 <b>Welcome to NEETIQBot, {safe_name}!</b>\n\n"
-            "I am your dedicated NEET preparation assistant. "
+            "I am your dedicated NEET preparation assistant.\n"
             "I provide high-quality MCQs, track your streaks, and manage competitive leaderboards.\n\n"
             "📌 <b>Use</b> /help <b>to see all available commands.</b>"
         )
-        
+
         bot_username = context.bot.username
         buttons = [
             [InlineKeyboardButton("📢 NEETIQBOT Updates", url="https://t.me/NEETIQBOTUPDATES")],
             [InlineKeyboardButton("🛠️ Contact Us", url="https://t.me/NEETIQsupportbot")],
             [InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_username}?startgroup=true")]
         ]
-        
+
         await update.message.reply_text(
-            apply_footer(welcome), 
+            apply_footer(welcome),
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="HTML"
         )
-    else:
+
+    # ---------------- GROUP / SUPERGROUP ----------------
+    elif chat.type in ("group", "supergroup"):
         safe_title = html.escape(chat.title) if chat.title else "this group"
-        group_msg = f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\nPreparing <b>{safe_title}</b> for upcoming quizzes."
-        await update.message.reply_text(apply_footer(group_msg), parse_mode="HTML")
-				
+        group_msg = (
+            f"🎉 <b>Group successfully registered with NEETIQBot!</b>\n\n"
+            f"Preparing <b>{safe_title}</b> for upcoming quizzes."
+        )
+        await update.message.reply_text(
+            apply_footer(group_msg),
+            parse_mode="HTML"
+		)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -890,58 +901,94 @@ async def autoquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Please provide a valid number for minutes.")
 
 async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
-    """Picks ONE question and sends it to ALL groups simultaneously with HTML formatting."""
+    """Picks ONE question and sends it ONLY to groups/supergroups (NO channels)."""
+
     with db.get_db() as conn:
         # 1. Check if auto-quiz is enabled
-        setting = conn.execute("SELECT value FROM settings WHERE key='autoquiz_enabled'").fetchone()
-        if not setting or setting[0] == '0': 
+        setting = conn.execute(
+            "SELECT value FROM settings WHERE key='autoquiz_enabled'"
+        ).fetchone()
+
+        if not setting or setting[0] == '0':
             return
-        
+
         # 2. Pick a random question
-        # Fetching by index to ensure compatibility: id:0, question:1, a:2, b:3, c:4, d:5, correct:6, explanation:7
-        q = conn.execute("SELECT id, question, a, b, c, d, correct, explanation FROM questions ORDER BY RANDOM() LIMIT 1").fetchone()
-        
+        q = conn.execute(
+            """
+            SELECT id, question, a, b, c, d, correct, explanation
+            FROM questions
+            ORDER BY RANDOM()
+            LIMIT 1
+            """
+        ).fetchone()
+
         if not q:
-            return 
+            return
 
-        # 3. Get all active groups
-        chats = conn.execute("SELECT chat_id FROM chats WHERE type != 'private'").fetchall()
+        # 3. Get ONLY groups / supergroups (🚫 NO CHANNELS)
+        chats = conn.execute(
+            "SELECT chat_id FROM chats WHERE type IN ('group','supergroup')"
+        ).fetchall()
 
-    # Prep Poll Data
+    # Prepare poll data
     options = [str(q[2]), str(q[3]), str(q[4]), str(q[5])]
-    correct_map = {'1': 0, '2': 1, '3': 2, '4': 3, 'A': 0, 'B': 1, 'C': 2, 'D': 3}
+    correct_map = {
+        '1': 0, '2': 1, '3': 2, '4': 3,
+        'A': 0, 'B': 1, 'C': 2, 'D': 3
+    }
     c_idx = correct_map.get(str(q[6]).upper(), 0)
 
     divider = "<b>━━━━━━━━━━━━━━━━━</b>"
-    question_text = f"🧠 <b>NEET MCQ (Global Quiz)</b>\n{divider}\n\n{q[1]}"
+    question_text = (
+        f"🧠 <b>NEET MCQ</b>\n"
+        f"{divider}\n\n"
+        f"{q[1]}"
+    )
     explanation_text = f"📖 <b>Explanation:</b>\n{q[7]}"
 
-    # Send to all groups
-    for c in chats:
+    sent_anywhere = False
+
+    # 4. Send poll to groups
+    for (chat_id,) in chats:
         try:
             msg = await context.bot.send_poll(
-                chat_id=c[0],
-                question=question_text,
+                chat_id=chat_id,
+                question=question_text[:300],  # 🔒 Telegram hard limit safety
                 options=options,
                 type=Poll.QUIZ,
                 correct_option_id=c_idx,
-                explanation=explanation_text,
+                explanation=explanation_text[:200],  # 🔒 Explanation limit safety
                 explanation_parse_mode=ParseMode.HTML,
                 is_anonymous=False
             )
-            
-            # Register active poll for scoring
+
+            sent_anywhere = True
+
+            # Register active poll
             with db.get_db() as conn:
-                conn.execute("INSERT INTO active_polls (poll_id, chat_id, correct_option_id) VALUES (?,?,?)", 
-                             (msg.poll.id, c[0], c_idx))
-            
-            await asyncio.sleep(0.2) 
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO active_polls
+                    (poll_id, chat_id, correct_option_id)
+                    VALUES (?,?,?)
+                    """,
+                    (msg.poll.id, chat_id, c_idx)
+                )
+
+            await asyncio.sleep(0.25)  # rate-limit safe
+
         except Exception:
+            # silently skip failed chats
             continue
 
-    # 4. Remove question from pool after successful broadcast
-    with db.get_db() as conn:
-        conn.execute("DELETE FROM questions WHERE id = ?", (q[0],))
+    # 5. Remove question ONLY if it was actually sent
+    if sent_anywhere:
+        with db.get_db() as conn:
+            conn.execute(
+                "DELETE FROM questions WHERE id = ?",
+                (q[0],)
+			)
+
 
 async def nightly_leaderboard_job(context: ContextTypes.DEFAULT_TYPE):
     """Sends a daily summary with plain-text names and bold headers."""
