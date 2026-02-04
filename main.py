@@ -1199,12 +1199,7 @@ if __name__ == '__main__':
     )
 
     print("🚀 NEETIQBot is fully secured and Online!")
-    application.run_polling(drop_pending_updates=True)
-
-
-
-
-
-
-
-
+    application.run_polling(
+    drop_pending_updates=True,
+    close_loop=False
+	)
