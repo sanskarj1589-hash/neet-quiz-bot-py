@@ -1094,45 +1094,52 @@ from flask import Flask
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, PollAnswerHandler, Defaults, filters
 from telegram.constants import ParseMode
 
-	
 
-# --- MAIN EXECUTION BLOCK ---
+# --- KEEP-ALIVE SERVER FOR RENDER ---
+flask_app = Flask('')
+
+@flask_app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    # Render provides PORT environment variable automatically
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
+# --- MAIN EXECUTION ---
 if __name__ == '__main__':
     # 1. Initialize Database
-    try:
-        db.init_db()
-        print("✅ Database Initialized!")
-    except Exception as e:
-        print(f"⚠️ Database Error: {e}")
-
-    # 2. Start the Keep-Alive Web Server (CRITICAL for Render)
-    # This must run in a separate thread BEFORE the bot blocks the script
+    db.init_db()
+    
+    # 2. Start the Keep-Alive Web Server
     print("🌐 Starting Keep-Alive server...")
     keep_alive()
 
-    # 3. Define Timezone
+    # 3. Define Timezone for Kolkata
     ist_timezone = pytz.timezone('Asia/Kolkata')
 
-    # 4. Build Application
-    token = os.environ.get("BOT_TOKEN")
-    if not token:
-        print("❌ CRITICAL ERROR: BOT_TOKEN not found!")
-        exit(1)
-
+    # 4. Build Application using Environment Variables
     application = (
         ApplicationBuilder()
-        .token(token) 
+        .token(os.environ.get("BOT_TOKEN")) 
         .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=ist_timezone)) 
         .build()
     )
 
-    # --- HANDLERS REGISTRATION ---
+    # --- HANDLERS ---
     
-    # Callback Handlers
+    # 1. Callback Query Handlers (Add these first for button responsiveness)
+    from telegram.ext import CallbackQueryHandler
     application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern="^bc_"))
     application.add_handler(CallbackQueryHandler(mystats, pattern="^check_join$"))
 
-    # Command Handlers
+    # 2. Commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("randomquiz", send_random_quiz))
@@ -1157,15 +1164,20 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("delallquestions", del_all_questions))
     application.add_handler(CommandHandler("delallcompliments", delallcompliments))
 
-    # Message & Poll Handlers
-    source_id = int(os.environ.get("SOURCE_GROUP_ID", 0))
-    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(chat_id=source_id), addquestion))
+    # 3. Mirroring & Special Handlers
+    application.add_handler(MessageHandler(
+        filters.Chat(SOURCE_GROUP_ID) & 
+        (~filters.COMMAND) & 
+        (filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.POLL), 
+        mirror_messages
+    ))
+    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.Chat(SOURCE_GROUP_ID), addquestion))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
-    # --- JOB QUEUE SETUP (APScheduler) ---
+    # --- JOB QUEUE SETUP ---
     jq = application.job_queue
 
-    # Fetch dynamic interval from DB
+    # Auto-quiz interval
     try:
         with db.get_db() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key='autoquiz_interval'").fetchone()
@@ -1173,6 +1185,7 @@ if __name__ == '__main__':
     except Exception:
         interval_min = 30 
 
+    
     # 1. Repeating Auto-Quiz
     jq.run_repeating(
         auto_quiz_job, 
@@ -1180,22 +1193,22 @@ if __name__ == '__main__':
         first=20,
         name="auto_quiz_job",
         job_kwargs={'misfire_grace_time': 300, 'coalesce': True}
-    )
+	)
 
-    # 2. Daily Leaderboard at 9:00 PM IST
+    # Nightly Leaderboard scheduled for 9:00 PM (21:00) IST
     jq.run_daily(
         nightly_leaderboard_job,
-        time=time(hour=21, minute=0, tzinfo=ist_timezone), 
+        time=time(hour=21, minute=0), 
         name="nightly_leaderboard",
-        job_kwargs={'misfire_grace_time': 300, 'coalesce': True}
+        job_kwargs={
+            'misfire_grace_time': 600,
+            'coalesce': True           
+        }
     )
 
-    # --- START THE BOT ---
     print("🚀 NEETIQBot is fully secured and Online!")
-    
-    # This is the final blocking call
     application.run_polling(drop_pending_updates=True)
-	
+
 
 
 
