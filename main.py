@@ -58,12 +58,6 @@ async def check_force_join(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> 
             continue
     return True
 
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.exception("Unhandled exception", exc_info=context.error)
-
-application.add_error_handler(error_handler)
-
 async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the target selection and execution of the broadcast."""
     query = update.callback_query
